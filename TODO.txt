@@ -1,0 +1,15 @@
+Fill in the various placeholder "{{}}" in error format strings.
+
+--verbose should actually tell what is happening
+    -> command invocations
+    -> decisions taken based on facts discovered (e.g. "snapshot YYYY-MM-DD found last in common between ds_a & ds_b; proceeding to <whatever>."
+
+move "replicate.rs", "retention.rs" into a submodule called "apps" (Programming Rust pg.178)
+
+fix fucked-up name convention:
+    `let apply_retention = App::new(...)`, BUT ALSO `use crate::retention::apply_retention`
+
+
+
+
+NEEDS the --init-nonexistent flag
