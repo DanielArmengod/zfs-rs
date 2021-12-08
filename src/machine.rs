@@ -91,7 +91,7 @@ impl Machine {
         let dryrun = if dryrun {"-n"} else {""};
         let rollback = if rollback {"-F"} else {""};
         let verbose = if verbose {"-v"} else {""};
-        let dst_pool = &ds.pool;
+        let dst_pool = ds.pool();
         let mut cmd = format!("zfs recv {rollback} {dryrun} {verbose} -d {dst_pool}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst_pool=dst_pool);
         if let Machine::Remote {host} = self {
             cmd = format!("ssh {} -- '{}'", host, cmd);

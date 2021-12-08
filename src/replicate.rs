@@ -13,7 +13,6 @@ pub struct ReplicateDatasetOpts {
     pub dryrun_recv: bool,
     pub app_verbose: bool,
     pub take_snap_now: Option<String>,  // If there is Some(name), it is implied that the user requests zfs-rs to take a snapshot at this time.
-    pub implied_name: bool,
 }
 
 pub fn replicate_dataset(
@@ -25,9 +24,9 @@ pub fn replicate_dataset(
 ) -> Result<String, anyhow::Error> {
     //Ok in case of successful send or nothing to do (both up-to-date)
 
-    //TODO: FOR NOW dst_ds.name IS IGNORED, BECAUSE WE SIMPLY WORK WITH -d WITH ZFS RECEIVE.
-    assert_eq!(dst_ds.name, S(""));
-    dst_ds.name = src_ds.name.clone();
+    // //TODO: FOR NOW dst_ds.name IS IGNORED, BECAUSE WE SIMPLY WORK WITH -d WITH ZFS RECEIVE.
+    // assert_eq!(dst_ds.name, S(""));
+    // dst_ds.name = src_ds.name.clone();
 
     if let Some(rand_snap_name) = opts.take_snap_now {
         eprintln!("Taking snapshot {}:{}@{} (requested by --take-snap-now).", src_machine, src_ds.fullname(), rand_snap_name);

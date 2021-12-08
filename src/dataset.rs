@@ -10,11 +10,13 @@ use crate::machine::Machine;
 
 #[cfg(test)]
 use crate::machine::parse_zfs;
+use crate::S;
 
 #[derive(Debug)]
 pub struct Dataset {
-    pub name: String,
-    pub pool: String,
+    fullname: String,
+    pool_idx: usize,
+    relative_idx: Option<usize>,
     pub snaps: Vec<Snap>,
 }
 
@@ -30,11 +32,13 @@ pub enum CommonOrDivergence<'a> {
 pub struct ZfsParseError(String);
 
 impl Dataset {
-    pub fn fullname(&self) -> String {
-        format!("{}/{}", self.pool, self.name)
+    pub fn fullname(&self) -> &str { &self.fullname }
+    pub fn pool(&self) -> &str { &self.fullname[0..self.pool_idx] }
+    pub fn relative(&self) -> &str {
+        if let Some(idx) = self.relative_idx {
+            &self.fullname[idx+1..]
+        } else { "" }
     }
-    pub fn name(&self) -> String { self.name.clone() }
-    pub fn pool(&self) -> String { self.pool.clone() }
 
     pub fn comm<'a, 'b, 'c>(&'a self, other: &'b Self) -> Vec<(u8, &'c Snap)>
         where
@@ -125,18 +129,6 @@ impl Dataset {
 }
 
 
-pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), anyhow::Error> {
-    let comps: Vec<&str> = value.split(':').collect();
-    let (remote, rest) = match comps.len() {
-        1 => (Machine::Local, comps[0]),
-        2 => (Machine::Remote {host: comps[0].to_owned()}, comps[1]),
-        _ => return Err(anyhow!("Too many ':' in dataset spec \"{}\".", value)),
-    };
-    let ds = Dataset::from_str(rest)?;
-
-    Ok((remote, ds))
-}
-
 fn render_tagged_snaps_for_deletion(tagged_snaps: Vec<(bool, &Snap)>) -> String {
     // Returns a string of the form "2021-07-12%2021-07-17,2021-07-19%..." suitable for feeding
     // into "zfs destroy pool/dataset@<output>".
@@ -156,31 +148,62 @@ fn render_tagged_snaps_for_deletion(tagged_snaps: Vec<(bool, &Snap)>) -> String 
         .join(",\\\n")
 }
 
-impl TryFrom<&str> for Dataset {
-    type Error = ZfsParseError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Dataset::from_str(value)
+// impl TryFrom<&str> for Dataset<'_> {
+//     type Error = ZfsParseError;
+//     fn try_from(value: &str) -> Result<Self, Self::Error> {
+//         Dataset::from_str(value)
+//     }
+// }
+
+pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), ZfsParseError> {
+    if !value.is_ascii() {
+        return Err(ZfsParseError(format!("{}: this string is not valid ASCII and thus cannot be parsed as a ZFS name.", value)));
     }
+    let value_u8 = value.as_bytes();
+    if value_u8[0] == b'/' || value_u8[value_u8.len()-1] == b'/' {
+        return Err(ZfsParseError(format!("{}: a ZFS name cannot begin or end with a slash.", value)));
+    }
+
+    let colon = value.find(':');
+    let slash = value.find('/');
+    let colon_idx: usize = match (colon, slash) {
+        (Some(cidx), _) if cidx == 0 => 0,
+        (Some(cidx), None) => cidx,
+        (Some(cidx), Some(sidx)) => {
+            if cidx < sidx { cidx } else { 0 }
+        },
+        (None, _) => 0,
+    };
+    let machine = &value[0..colon_idx];
+    let mmachine = match machine.len() {
+        0 => Machine::Local,
+        _ => Machine::Remote {host: S(machine)},
+    };
+
+    let value = &value[colon_idx+1..];
+    let doubleslash = value.find("//");
+    let fullname = match doubleslash {
+        Some(idx) => value.replace("//", "/"),
+        None => value.to_string(),
+    };
+    let pool_idx : usize = fullname.find('/').unwrap_or(fullname.len()-1);
+    let relative_idx = doubleslash;
+    let ddataset = Dataset {fullname, snaps: Vec::new(), pool_idx, relative_idx};
+
+    Ok((mmachine, ddataset))
 }
 
-impl FromStr for Dataset {
-    type Err = ZfsParseError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let comps: Vec<&str> = value.splitn(2, '/').collect();
-        let (pool, name) = match comps.len() {
-            1 => (comps[0], ""),
-            2 => (comps[0], comps[1]),
-            _ => unreachable!(),
-        };
-        // if comps.len() != 2 {
-        //     return Err(ZfsParseError("There must be at least one '/' separator: {}.".to_owned()));
-        // }
-        let pool = pool.to_owned();
-        let name = name.to_owned();
+    // fn from_str(value: &str) -> Result<Self, Self::Err> {
+    //     let fullname : String = value.into();
+    //     let comps: Vec<&str> = fullname.splitn(2, '/').collect();
+    //     let (pool, name) = match comps.len() {
+    //         1 => (comps[0], ""),
+    //         2 => (comps[0], comps[1]),
+    //         _ => unreachable!(),
+    //     };
+    //     Ok(Dataset {fullname, name, pool, snaps: Vec::new()})
+    // }
 
-        Ok(Dataset {name, pool, snaps: Vec::new()})
-    }
-}
 
 impl std::fmt::Display for Dataset {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

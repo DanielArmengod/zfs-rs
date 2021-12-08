@@ -13,3 +13,26 @@ fix fucked-up name convention:
 
 
 NEEDS the --init-nonexistent flag
+
+
+
+
+
+
+
+
+
+replicate tank//deluge baccu/tank  -> baccu/tank/deluge
+replicate tank//pangea/webdata baccu -> baccu/pangea/webdata
+
+
+
+
+
+baal:tank//lareputa
+
+:tank/lareputa
+
+POSSIBLE GOTCHAS
+
+tank/weird:datasetname
