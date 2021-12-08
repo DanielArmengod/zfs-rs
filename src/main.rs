@@ -84,6 +84,7 @@ fn main() {
                 .takes_value(true)
                 .long("snap-name")
                 .short('T')
+                .requires("take-snap-now")  //TODO the auto-generated error message isn't very friendly; maybe we can move this into custom logic, or look into embettering the default message?
         );
 
     let apply_retention = App::new("apply-retention")

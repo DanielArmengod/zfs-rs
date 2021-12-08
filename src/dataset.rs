@@ -123,8 +123,16 @@ impl Dataset {
     pub fn oldest_snap(&self) -> &Snap {
         &self.snaps[0]
     }
+
     pub fn newest_snap(&self) -> &Snap {
         &self.snaps.last().unwrap()
+    }
+
+    pub fn append_relative(&mut self, other: &Self) {
+        if other.relative() != "" {
+            self.fullname.push('/');
+            self.fullname.push_str(other.relative());
+        }
     }
 }
 
@@ -285,8 +293,8 @@ fn build_fake_dataset(spec: &str, snaps_output_literal: &str) -> Dataset {
 
 #[test]
 fn test_render_tagged_snaps_for_deletion() {
-    // TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
-    // With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
+    // TODO TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
+    //  With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
     let zelda_webdata = build_fake_dataset(
         "zelda/webdata",
         include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")
@@ -356,8 +364,8 @@ fn basic_snap_retention_criteria(s: &Snap) -> bool {
 
 #[test]
 fn test_tag_snaps_for_deletion() {
-    // TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
-    // With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
+    // TODO TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
+    //  With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
     let zelda_webdata = build_fake_dataset(
         "zelda/webdata",
         include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")

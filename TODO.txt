@@ -1,5 +1,3 @@
-Fill in the various placeholder "{{}}" in error format strings.
-
 --verbose should actually tell what is happening
     -> command invocations
     -> decisions taken based on facts discovered (e.g. "snapshot YYYY-MM-DD found last in common between ds_a & ds_b; proceeding to <whatever>."
@@ -9,4 +7,16 @@ move "replicate.rs", "retention.rs" into a submodule called "apps" (Programming 
 fix fucked-up name convention:
     `let apply_retention = App::new(...)`, BUT ALSO `use crate::retention::apply_retention`
 
-NEEDS the --init-nonexistent flag
+NEEDS the --init-nonexistent (or --allow-nonexistent or whatever) flag to avoid performing a full send when what you actually wanted was an incremental synchronization, but fucked up specifying the destination (or source) argument.
+
+error messages are user-unfriendly across the board.
+
+A different Popen library should be used. (which?)
+
+implement apply_retention and comm :(
+
+struct Dataset should invalidate (?) snaps every time it is "modified", such as by Machine::recv, Machine::delete_snaps, Dataset::append_relative, etc.
+    Maybe the "old" snap vector can be kept in an additional Dataset field, such that user-code can access it and verify that changes (or lack thereof) are correct after a modifying operation?
+
+Proper documentation should be written.
+

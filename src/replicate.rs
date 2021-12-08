@@ -24,9 +24,7 @@ pub fn replicate_dataset(
 ) -> Result<String, anyhow::Error> {
     //Ok in case of successful send or nothing to do (both up-to-date)
 
-    // //TODO: FOR NOW dst_ds.name IS IGNORED, BECAUSE WE SIMPLY WORK WITH -d WITH ZFS RECEIVE.
-    // assert_eq!(dst_ds.name, S(""));
-    // dst_ds.name = src_ds.name.clone();
+    dst_ds.append_relative(src_ds);
 
     if let Some(rand_snap_name) = opts.take_snap_now {
         eprintln!("Taking snapshot {}:{}@{} (requested by --take-snap-now).", src_machine, src_ds.fullname(), rand_snap_name);
@@ -66,8 +64,12 @@ pub fn replicate_dataset(
     }
 
     if !dst_dataset_existed {
+        if opts.app_verbose {
+            eprintln!("Ensuring the destination dataset's ancestors exist.");
+        }
+        dst_machine.create_ancestors(dst_ds).context(format!("Failed to create {}:{}'s ancestors!", dst_machine, dst_ds.fullname()))?;
         let sendside_full = src_machine.fullsend_s(&src_ds, src_ds.oldest_snap(), opts.verbose_send);
-        let recvside_full = dst_machine.recv_into_pool(&dst_ds, opts.do_rollback, opts.dryrun_recv, opts.verbose_recv);
+        let recvside_full = dst_machine.recv(&dst_ds, opts.do_rollback, opts.dryrun_recv, opts.verbose_recv);
         let pipeline = sendside_full | recvside_full;
         let tmp_cmdline_string = format!("{:?}", pipeline);
         if opts.app_verbose {
@@ -96,7 +98,7 @@ pub fn replicate_dataset(
         eprintln!("Now doing incremental send from {} to {}.", last_comm.name, src_ds.newest_snap());
     }
     let sendside = src_machine.send_from_s_till_last(&src_ds, last_comm, opts.simple_incremental, opts.verbose_send);
-    let destside = dst_machine.recv_into_pool(&dst_ds, opts.do_rollback, opts.dryrun_recv, opts.verbose_recv);
+    let destside = dst_machine.recv(&dst_ds, opts.do_rollback, opts.dryrun_recv, opts.verbose_recv);
     let pipeline = sendside | destside;
     let tmp_cmdline_string = format!("{:?}", pipeline);
     if opts.app_verbose {

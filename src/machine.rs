@@ -4,6 +4,7 @@ use crate::dataset::{Dataset, Snap, ZfsParseError};
 use subprocess::{Exec, Redirection};
 use chrono::offset::Utc;
 use chrono::TimeZone;
+use itertools::Itertools;
 use thiserror::Error;
 use crate::S;
 
@@ -97,12 +98,12 @@ impl Machine {
         Exec::shell(cmd)
     }
 
-    pub fn recv_into_pool(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Exec {
+    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Exec {
         let dryrun = if dryrun {"-n"} else {""};
         let rollback = if rollback {"-F"} else {""};
         let verbose = if verbose {"-v"} else {""};
-        let dst_pool = ds.pool();
-        let mut cmd = format!("zfs recv {rollback} {dryrun} {verbose} -d {dst_pool}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst_pool=dst_pool);
+        let dst = ds.fullname();
+        let mut cmd = format!("zfs recv {rollback} {dryrun} {verbose} {dst}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst=dst);
         if let Machine::Remote {host} = self {
             cmd = format!("ssh {} -- '{}'", host, cmd);
         }
@@ -131,6 +132,26 @@ impl Machine {
             } else {
                 Err(MachineError::Other(subproc.stderr_str()))
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn create_ancestors(&self, ds: &Dataset) -> Result<(), MachineError> {
+        let parts: Vec<&str> = ds.fullname().split('/').collect();
+        let except_last = parts.iter().take(parts.len()-1).join("/");
+        let mut cmd = format!("zfs create -p {}", except_last);
+        if let Machine::Remote {host} = self {
+            cmd = format!("ssh {} -- '{}'", host, cmd);
+        }
+
+        // TODO: Use .communicate() instead of .capture() to support timeout settings.
+        let subproc = Exec::shell(cmd)
+            .stdout(Redirection::Pipe)
+            .stderr(Redirection::Pipe)
+            .capture().context("Failed to spawn the command.")?;
+        if !subproc.exit_status.success() {
+            return Err(MachineError::Other(subproc.stderr_str()))
         }
 
         Ok(())
@@ -177,6 +198,8 @@ fn test_parse_zfs() {
 
 #[test]
 fn test_remotes() -> Result<(), anyhow::Error>{
+    //TODO This functionality interacts with the environment and should probably not be tested here.
+
     // let ml = Machine::Local;
     let mr = Machine::Remote { host: "baal".to_string() };
     let mut d = Dataset::from_str("tank/deluge")?;
