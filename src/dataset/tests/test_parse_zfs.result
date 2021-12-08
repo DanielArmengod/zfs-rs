@@ -1,0 +1,38 @@
+[
+    Snap {
+        guid: 9429658936861884775,
+        name: "a",
+        creation: 2018-07-20T12:46:57Z,
+        holds: 0,
+    },
+    Snap {
+        guid: 13517661520060846954,
+        name: "tobaccu",
+        creation: 2020-06-09T11:04:24Z,
+        holds: 0,
+    },
+    Snap {
+        guid: 3227281492486338901,
+        name: "topiso",
+        creation: 2020-06-20T06:43:53Z,
+        holds: 0,
+    },
+    Snap {
+        guid: 14846099703840313688,
+        name: "baccuisREDI",
+        creation: 2020-08-26T21:23:22Z,
+        holds: 0,
+    },
+    Snap {
+        guid: 8069233758134835194,
+        name: "remote_sync_1",
+        creation: 2020-10-25T18:39:50Z,
+        holds: 0,
+    },
+    Snap {
+        guid: 10189537034009634583,
+        name: "2021-07-19",
+        creation: 2021-07-19T10:01:59Z,
+        holds: 0,
+    },
+]

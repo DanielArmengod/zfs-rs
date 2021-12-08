@@ -9,30 +9,4 @@ move "replicate.rs", "retention.rs" into a submodule called "apps" (Programming 
 fix fucked-up name convention:
     `let apply_retention = App::new(...)`, BUT ALSO `use crate::retention::apply_retention`
 
-
-
-
 NEEDS the --init-nonexistent flag
-
-
-
-
-
-
-
-
-
-replicate tank//deluge baccu/tank  -> baccu/tank/deluge
-replicate tank//pangea/webdata baccu -> baccu/pangea/webdata
-
-
-
-
-
-baal:tank//lareputa
-
-:tank/lareputa
-
-POSSIBLE GOTCHAS
-
-tank/weird:datasetname

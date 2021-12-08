@@ -164,45 +164,107 @@ pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), ZfsParseError> {
         return Err(ZfsParseError(format!("{}: a ZFS name cannot begin or end with a slash.", value)));
     }
 
-    let colon = value.find(':');
+    let mut colon = value.find(':');
     let slash = value.find('/');
-    let colon_idx: usize = match (colon, slash) {
-        (Some(cidx), _) if cidx == 0 => 0,
-        (Some(cidx), None) => cidx,
-        (Some(cidx), Some(sidx)) => {
-            if cidx < sidx { cidx } else { 0 }
-        },
-        (None, _) => 0,
+
+    //  Commented out because the lines below are a neater replacement.
+    // colon = match (colon, slash) {
+    //     (Some(cidx), _) if cidx == 0 => colon,
+    //     (Some(cidx), None) => colon,
+    //     (Some(cidx), Some(sidx)) => {
+    //         if cidx < sidx { colon } else { None }
+    //     },
+    //     (None, _) => None,
+    // };
+
+    if let (Some(cidx), Some(sidx)) = (colon, slash) {
+        if cidx > sidx {
+            colon = None;
+        }
+    }
+
+    let machine_spec = match colon {
+        None => &value[0..0],
+        Some(colon_idx) => &value[0..colon_idx],
     };
-    let machine = &value[0..colon_idx];
-    let mmachine = match machine.len() {
-        0 => Machine::Local,
-        _ => Machine::Remote {host: S(machine)},
+    let dataset_spec = match colon {
+        None => &value[..],
+        Some(colon_idx) => &value[colon_idx+1..]
     };
 
-    let value = &value[colon_idx+1..];
-    let doubleslash = value.find("//");
-    let fullname = match doubleslash {
-        Some(idx) => value.replace("//", "/"),
-        None => value.to_string(),
-    };
-    let pool_idx : usize = fullname.find('/').unwrap_or(fullname.len()-1);
-    let relative_idx = doubleslash;
-    let ddataset = Dataset {fullname, snaps: Vec::new(), pool_idx, relative_idx};
-
-    Ok((mmachine, ddataset))
+    Ok((Machine::from_str(machine_spec)?, Dataset::from_str(dataset_spec)?))
 }
 
-    // fn from_str(value: &str) -> Result<Self, Self::Err> {
-    //     let fullname : String = value.into();
-    //     let comps: Vec<&str> = fullname.splitn(2, '/').collect();
-    //     let (pool, name) = match comps.len() {
-    //         1 => (comps[0], ""),
-    //         2 => (comps[0], comps[1]),
-    //         _ => unreachable!(),
-    //     };
-    //     Ok(Dataset {fullname, name, pool, snaps: Vec::new()})
-    // }
+#[test]
+fn test_parse_spec() {
+    let (m, d) = parse_spec("tank").unwrap();
+    assert_eq!(m, Machine::Local);
+    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.relative(), "");
+    assert_eq!(d.pool(), "tank");
+
+    let (m, d) = parse_spec("baal:tank").unwrap();
+    match m {
+        Machine::Remote {ref host } if host == "baal" => (),
+        _ => panic!("Machine wasn't constructed properly!"),
+    }
+    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.relative(), "");
+    assert_eq!(d.pool(), "tank");
+
+    let (m, d) = parse_spec(":tank").unwrap();
+    assert_eq!(m, Machine::Local);
+    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.relative(), "");
+    assert_eq!(d.pool(), "tank");
+
+    let (m, d) = parse_spec(":tank:lareputa").unwrap();
+    assert_eq!(m, Machine::Local);
+    assert_eq!(d.fullname, "tank:lareputa");
+    assert_eq!(d.relative(), "");
+    assert_eq!(d.pool(), "tank:lareputa");
+
+    let (m, d) = parse_spec(":tank:lareputa/a/path/to/dataset").unwrap();
+    assert_eq!(m, Machine::Local);
+    assert_eq!(d.fullname, "tank:lareputa/a/path/to/dataset");
+    assert_eq!(d.relative(), "");
+    assert_eq!(d.pool(), "tank:lareputa");
+
+    let (m, d) = parse_spec(":tank:lareputa/a/path//to/a/relative/dataset").unwrap();
+    assert_eq!(m, Machine::Local);
+    assert_eq!(d.fullname, "tank:lareputa/a/path/to/a/relative/dataset");
+    assert_eq!(d.relative(), "to/a/relative/dataset");
+    assert_eq!(d.pool(), "tank:lareputa");
+
+    let (m, d) = parse_spec("server.company.tld:tank:lareputa/a/path//to/a/relative/dataset").unwrap();
+    match m {
+        Machine::Remote {ref host } if host == "server.company.tld" => (),
+        _ => panic!("Machine wasn't constructed properly!"),
+    }    assert_eq!(d.fullname, "tank:lareputa/a/path/to/a/relative/dataset");
+    assert_eq!(d.relative(), "to/a/relative/dataset");
+    assert_eq!(d.pool(), "tank:lareputa");
+
+    let r = parse_spec("somehost:an_invâlid_pòól/somedataset");
+    assert!(r.is_err());
+
+    let r = parse_spec("somehost:but/trailing/slash/");
+    assert!(r.is_err());
+}
+
+impl FromStr for Dataset {
+    type Err = ZfsParseError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let doubleslash = value.find("//");
+        let fullname = match doubleslash {
+            Some(_) => value.replace("//", "/"),
+            None => value.to_string(),
+        };
+        let pool_idx : usize = fullname.find('/').unwrap_or(fullname.len());
+        let relative_idx = doubleslash;
+
+        Ok(Dataset { fullname, snaps: Vec::new(), pool_idx, relative_idx })
+    }
+}
 
 
 impl std::fmt::Display for Dataset {
@@ -213,46 +275,69 @@ impl std::fmt::Display for Dataset {
 
 
 #[cfg(test)]
-fn build_fake_dataset(pool: &'static str, name: &'static str, snaps_output_literal: &'static str) -> Dataset {
+fn build_fake_dataset(spec: &str, snaps_output_literal: &str) -> Dataset {
+    let mut ds = Dataset::from_str(spec).unwrap();
     let snaps = parse_zfs(snaps_output_literal);
-    Dataset { pool: pool.to_string(), name: name.to_string(), snaps: snaps }
+    ds.snaps = snaps;
+
+    ds
 }
 
 #[test]
 fn test_render_tagged_snaps_for_deletion() {
+    // TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
+    // With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
     let zelda_webdata = build_fake_dataset(
-        "zelda",
-        "webdata",
+        "zelda/webdata",
         include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")
     );
     let tagged_snaps = zelda_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
 
-    println!("{}", render_tagged_snaps_for_deletion(tagged_snaps));
+    let res = render_tagged_snaps_for_deletion(tagged_snaps);
+    assert!(res == include_str!("dataset/tests/test_render_tagged_snaps_for_deletion.result"));
 }
 
 
 #[test]
-fn test_comm() -> Result<(), anyhow::Error> {
-    let zelda_snaps = parse_zfs(include_str!("dataset/tests/zelda_webdata.list"));
-    let zelda_webdata = Dataset { pool: "zelda".to_string(), name: "webdata".to_string(), snaps: zelda_snaps };
-    let tank_snaps = parse_zfs(include_str!("dataset/tests/tank_webdata.list"));
-    let tank_webdata = Dataset { pool: "tank".to_string(), name: "webdata".to_string(), snaps: tank_snaps };
-
-    let res = zelda_webdata.comm(&tank_webdata);
-
-    Ok(())
+fn test_comm() {
+    let zelda_webdata = build_fake_dataset(
+        "zelda/webdata",
+        include_str!("dataset/tests/zelda_webdata.list")
+    );
+    let tank_webdata = build_fake_dataset(
+        "tank/webdata",
+        include_str!("dataset/tests/tank_webdata.list")
+    );
+    let comm = zelda_webdata.comm(&tank_webdata);
+    let res = format!("{:#?}\n", comm);
+    assert_eq!(res, include_str!("dataset/tests/test_comm.result"));
 }
 
 #[test]
 fn test_last_common_or_divergence() {
-    let zelda_snaps = parse_zfs(include_str!("dataset/tests/zelda_webdata-nocommon.list"));
-    let zelda_webdata = Dataset { pool: "zelda".to_string(), name: "webdata".to_string(), snaps: zelda_snaps };
-    let tank_snaps = parse_zfs(include_str!("dataset/tests/tank_webdata.list"));
-    let tank_webdata = Dataset { pool: "tank".to_string(), name: "webdata".to_string(), snaps: tank_snaps };
+    let tank_webdata = build_fake_dataset(
+        "tank/webdata",
+        include_str!("dataset/tests/tank_webdata.list")
+    );
+    let zelda_webdata = build_fake_dataset(
+        "zelda/webdata",
+        include_str!("dataset/tests/zelda_webdata.list")
+    );
+    let zelda_webdata_divergence = build_fake_dataset(
+        "zelda/webdata",
+        include_str!("dataset/tests/zelda_webdata-divergence.list")
+    );
+    let baal_phone = build_fake_dataset(
+        "zelda/webdata",
+        include_str!("dataset/tests/baal_tank_phone.list")
+    );
+    let none = tank_webdata.last_common_or_divergence(&baal_phone);
+    let common = tank_webdata.last_common_or_divergence(&zelda_webdata);
+    let divergence = tank_webdata.last_common_or_divergence(&zelda_webdata_divergence);
 
-    let res = tank_webdata.last_common_or_divergence(&zelda_webdata);
+    let res = format!("{:#?}\n{:#?}\n{:#?}\n", none, common, divergence);
 
-    println!("{:#?}", res);
+    assert_eq!(res, include_str!("dataset/tests/test_last_common_or_divergence.result"));
 }
 
 fn basic_snap_retention_criteria(s: &Snap) -> bool {
@@ -271,17 +356,17 @@ fn basic_snap_retention_criteria(s: &Snap) -> bool {
 
 #[test]
 fn test_tag_snaps_for_deletion() {
-    let tank_snaps = parse_zfs(include_str!("dataset/tests/tank_webdata.list"));
-    let tank_webdata = Dataset { pool: "tank".to_string(), name: "webdata".to_string(), snaps: tank_snaps };
-    let zelda_snaps = parse_zfs(include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list"));
-    let zelda_webdata = Dataset { pool: "zelda".to_string(), name: "webdata".to_string(), snaps: zelda_snaps };
+    // TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
+    // With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
+    let zelda_webdata = build_fake_dataset(
+        "zelda/webdata",
+        include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")
+    );
+    let tagged = zelda_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
+    let res = format!("{:#?}\n", tagged);
 
-    let res1 = tank_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
-    let res2 = zelda_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
-    println!("{:#?}", res2);
+    assert_eq!(res, include_str!("dataset/tests/test_tag_snaps_for_deletion.result"));
 }
-
-
 
 #[derive(Debug)]
 pub struct Snap {

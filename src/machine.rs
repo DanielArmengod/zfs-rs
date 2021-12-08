@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use anyhow::Context;
-use crate::dataset::{Dataset, Snap};
+use crate::dataset::{Dataset, Snap, ZfsParseError};
 use subprocess::{Exec, Redirection};
 use chrono::offset::Utc;
 use chrono::TimeZone;
@@ -22,12 +22,22 @@ pub enum MachineError {
     Boxed(#[from] anyhow::Error),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Machine {
     Local,
     Remote {
         host: String,
         // Maybe add <user> field here, for credentials?
+    }
+}
+
+impl FromStr for Machine {
+    type Err = ZfsParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.len() {
+            0 => Machine::Local,
+            _ => Machine::Remote {host: S(s)},
+        })
     }
 }
 
@@ -161,8 +171,8 @@ pub fn parse_zfs(output: &str) -> Vec<Snap> {
 
 #[test]
 fn test_parse_zfs() {
-    let output = include_str!("dataset/tests/baal_tank_phone.list");
-    println!("{:?}", parse_zfs(output));
+    let res = format!("{:#?}", parse_zfs(include_str!("dataset/tests/baal_tank_phone.list")));
+    assert!(res == include_str!("dataset/tests/test_parse_zfs.result"));
 }
 
 #[test]
