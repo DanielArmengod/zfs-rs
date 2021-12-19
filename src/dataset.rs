@@ -76,10 +76,7 @@ impl Dataset {
         retval
     }
 
-    pub fn last_common_or_divergence<'a, 'b, 'c>(&'a self, other: &'b Self) -> CommonOrDivergence<'c>
-        where
-            'a: 'c,
-            'b: 'c,
+    pub fn last_common_or_divergence<'a, 'b>(&'a self, other: &'b Self) -> CommonOrDivergence<'a>
     // It is convention to have `self` be the "replication source" and `other` the "replication target".
     // Therefore, it is allowed for `self` to have additional snapshots after the last one in common
     // (it is assumed those will be "sent" to other).
@@ -87,17 +84,19 @@ impl Dataset {
     {
         let v = self.comm(other);
         // Get the (index of the) last snapshot present in both datasets.
-        let last_common = v.iter()    // Iterator over [&(1,&Snap), &(1,&Snap), &(0,&Snap), ...]
+        let mut last_common = v.iter()    // Iterator over [&(1,&Snap), &(1,&Snap), &(0,&Snap), ...]
             .enumerate()                            // [(0,&(1,&Snap)), (1,&(1,&Snap)), (2,&(0,&Snap)), ...]
             .rev().find(|&(_,tup)| tup.0 == 1);
         match last_common {
             None => return CommonOrDivergence::NoneInCommon,  //TODO implicit return OK?
-            Some((idx, tup)) => {
+            Some((idx, mut tup)) => {
                 let mut rem = (&v[idx..]).iter();
                 // There can be no Snapshot only in OTHER within this slice.
-                match rem.find(|&tup| tup.0 == 2) {
-                    None => CommonOrDivergence::Common(tup.1),
-                    Some(_) => CommonOrDivergence::Divergence(tup.1),
+                unsafe {
+                    match rem.find(|&tup| tup.0 == 2) {
+                        None => CommonOrDivergence::Common(std::mem::transmute::<&'_ Snap, &'a Snap>(tup.1)),
+                        Some(_) => CommonOrDivergence::Divergence(std::mem::transmute::<&'_ Snap, &'a Snap>(tup.1)),
+                    }
                 }
             }
         }
