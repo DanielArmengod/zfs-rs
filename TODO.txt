@@ -20,3 +20,4 @@ struct Dataset should invalidate (?) snaps every time it is "modified", such as 
 
 Proper documentation should be written.
 
+Add support for multiple source parameters (e.g. zfs-rs replicate tank//{deluge,lxc,shadowplay} baccu/tank)

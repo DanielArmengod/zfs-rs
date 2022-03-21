@@ -84,12 +84,12 @@ impl Dataset {
     {
         let v = self.comm(other);
         // Get the (index of the) last snapshot present in both datasets.
-        let mut last_common = v.iter()    // Iterator over [&(1,&Snap), &(1,&Snap), &(0,&Snap), ...]
+        let last_common = v.iter()    // Iterator over [&(1,&Snap), &(1,&Snap), &(0,&Snap), ...]
             .enumerate()                            // [(0,&(1,&Snap)), (1,&(1,&Snap)), (2,&(0,&Snap)), ...]
             .rev().find(|&(_,tup)| tup.0 == 1);
         match last_common {
             None => return CommonOrDivergence::NoneInCommon,  //TODO implicit return OK?
-            Some((idx, mut tup)) => {
+            Some((idx, tup)) => {
                 let mut rem = (&v[idx..]).iter();
                 // There can be no Snapshot only in OTHER within this slice.
                 unsafe {
@@ -292,16 +292,19 @@ fn build_fake_dataset(spec: &str, snaps_output_literal: &str) -> Dataset {
 
 #[test]
 fn test_render_tagged_snaps_for_deletion() {
-    // TODO TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
-    //  With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
+    fn retention_criteria(s: &Snap) -> bool {
+        let when = "2021-12-08T10:01:58Z".parse::<DateTime<Utc>>().unwrap();
+        __basic_snap_retention_criteria(s, when)
+    }
     let zelda_webdata = build_fake_dataset(
         "zelda/webdata",
         include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")
     );
-    let tagged_snaps = zelda_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
+    let tagged_snaps = zelda_webdata.tag_snaps_for_deletion(retention_criteria);
 
     let res = render_tagged_snaps_for_deletion(tagged_snaps);
-    assert!(res == include_str!("dataset/tests/test_render_tagged_snaps_for_deletion.result"));
+    println!("zfs destroy -v zelda/webdata@\\\n{}", res);
+    assert_eq!(res, include_str!("dataset/tests/test_render_tagged_snaps_for_deletion.result"));
 }
 
 
@@ -347,11 +350,11 @@ fn test_last_common_or_divergence() {
     assert_eq!(res, include_str!("dataset/tests/test_last_common_or_divergence.result"));
 }
 
-fn basic_snap_retention_criteria(s: &Snap) -> bool {
+fn __basic_snap_retention_criteria(s: &Snap, when: DateTime<Utc>) -> bool {
     // A "true" veredict is interpreted as TO KEEP
 
     // Keep if taken less than 6 days ago, or taken on a Sunday and less than 6 months ago.
-    let chrono_decision = matches!(s.creation.weekday(), chrono::Weekday::Sun) && (Utc::now() - s.creation) < Duration::days(180);
+    let chrono_decision = matches!(s.creation.weekday(), chrono::Weekday::Sun) && (when - s.creation) < Duration::days(180);
     // Keep if name ISN'T normal.
     let normal_name = Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
     let name_decision = !normal_name.is_match(&s.name);
@@ -361,15 +364,22 @@ fn basic_snap_retention_criteria(s: &Snap) -> bool {
     chrono_decision || name_decision || holds_decision
 }
 
+fn basic_snap_retention_criteria(s: &Snap) -> bool {
+    let when = Utc::now();
+    __basic_snap_retention_criteria(s, when)
+}
+
 #[test]
 fn test_tag_snaps_for_deletion() {
-    // TODO TEST WILL BREAK in the future: because `fn basic_snap_retention_criteria` uses Utc::now() :shrugs:
-    //  With 2021-12-08T10:01:58Z as the test date, the output tested here should be correct.
+    fn retention_criteria(s: &Snap) -> bool {
+        let when = "2021-12-08T10:01:58Z".parse::<DateTime<Utc>>().unwrap();
+        __basic_snap_retention_criteria(s, when)
+    }
     let zelda_webdata = build_fake_dataset(
         "zelda/webdata",
         include_str!("dataset/tests/zelda_webdata-holds-and-weird-name.list")
     );
-    let tagged = zelda_webdata.tag_snaps_for_deletion(basic_snap_retention_criteria);
+    let tagged = zelda_webdata.tag_snaps_for_deletion(retention_criteria);
     let res = format!("{:#?}\n", tagged);
 
     assert_eq!(res, include_str!("dataset/tests/test_tag_snaps_for_deletion.result"));
