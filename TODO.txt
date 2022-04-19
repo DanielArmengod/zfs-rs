@@ -4,16 +4,9 @@
 
 move "replicate.rs", "retention.rs" into a submodule called "apps" (Programming Rust pg.178)
 
-fix fucked-up name convention:
-    `let apply_retention = App::new(...)`, BUT ALSO `use crate::retention::apply_retention`
-
 NEEDS the --init-nonexistent (or --allow-nonexistent or whatever) flag to avoid performing a full send when what you actually wanted was an incremental synchronization, but fucked up specifying the destination (or source) argument.
 
-error messages are user-unfriendly across the board.
-
 A different Popen library should be used. (which?)
-
-implement apply_retention and comm :(
 
 struct Dataset should invalidate (?) snaps every time it is "modified", such as by Machine::recv, Machine::delete_snaps, Dataset::append_relative, etc.
     Maybe the "old" snap vector can be kept in an additional Dataset field, such that user-code can access it and verify that changes (or lack thereof) are correct after a modifying operation?
@@ -21,3 +14,22 @@ struct Dataset should invalidate (?) snaps every time it is "modified", such as 
 Proper documentation should be written.
 
 Add support for multiple source parameters (e.g. zfs-rs replicate tank//{deluge,lxc,shadowplay} baccu/tank)
+
+
+
+
+--------------------------------
+
+March 2022.
+
+Lo que más urgentemente se necesita aqui es ilustrar las diferentes invocaciones que puede tener el programa,
+así como el resultado esperado de cada una de ellas.
+
+En particular, hace falta documentar y estandarizar el formato que tiene `dataset_spec`: que significan los siguientes:
+
+    tank/deluge
+    :tank/deluge
+    baal:tank/deluge
+    :baal:tank/deluge
+    baal:tank//deluge
+    tank

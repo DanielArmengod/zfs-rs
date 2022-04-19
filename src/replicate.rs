@@ -30,11 +30,11 @@ pub fn replicate_dataset(
         eprintln!("Taking snapshot {}:{}@{} (requested by --take-snap-now).", src_machine, src_ds.fullname(), rand_snap_name);
         src_machine.create_snap(src_ds, &rand_snap_name).context("Failed to take snapshot (requested by --take-snap-now).")?;
     }
-    src_machine.get_snaps(src_ds)?;  // No handling it if this fails.
+    src_machine.get_snaps(src_ds).context(format!("Unable to get snapshots for {}.", src_ds))?;  // No handling it if this fails.
     let dst_dataset_existed = match dst_machine.get_snaps(dst_ds) {
         Ok(_) => true,
         Err(MachineError::NoDataset) => false,
-        Err(e) => return Err(e).context("Failed to get dst_ds snapshot list.")
+        Err(e) => return Err(e).context(format!("Unable to get snapshots for {}.", dst_ds))
     };
     if opts.app_verbose {
         eprintln!("Got {} snapshot(s) from {}:{}.", src_ds.snaps.len(), src_machine, src_ds.fullname());

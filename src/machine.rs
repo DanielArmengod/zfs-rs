@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::string;
 use anyhow::Context;
 use crate::dataset::{Dataset, Snap, ZfsParseError};
 use subprocess::{Exec, Redirection};
@@ -6,6 +7,7 @@ use chrono::offset::Utc;
 use chrono::TimeZone;
 use itertools::Itertools;
 use thiserror::Error;
+// use string::ToString;
 use crate::S;
 
 
@@ -17,10 +19,12 @@ pub enum MachineError {
     InvalidCharacter,
     #[error("The name is already in use.")]
     NameAlreadyInUse,
-    #[error("{0}")]
-    Other(String),
+    #[error("ZFS administrative commands cannot be found in {}. Hint: is ZFS installed in the target machine, and are you root there?", .machine)]
+    NoZFSRuntime{machine: String},
+    #[error("Unspecified error: {0}")]
+    Unspecified(String),
     #[error(transparent)]
-    Boxed(#[from] anyhow::Error),
+    Other(#[from] anyhow::Error),
 }
 
 #[derive(Debug, PartialEq)]
@@ -61,8 +65,11 @@ impl Machine {
         if !subproc.exit_status.success() {
             return if subproc.stderr_str().ends_with("dataset does not exist\n") {
                 Err(MachineError::NoDataset)
-            } else {
-                Err(MachineError::Other(subproc.stderr_str()))
+            } else if subproc.stderr_str().starts_with("sh: 1") {
+                Err(MachineError::NoZFSRuntime{machine: self.to_string()})
+            }
+            else {
+                Err(MachineError::Unspecified(subproc.stderr_str()))
             }
         }
         let stdout = subproc.stdout_str();
@@ -130,7 +137,7 @@ impl Machine {
             } else if subproc.stderr_str().contains("dataset already exists") {
                 Err(MachineError::NameAlreadyInUse)
             } else {
-                Err(MachineError::Other(subproc.stderr_str()))
+                Err(MachineError::Unspecified(subproc.stderr_str()))
             }
         }
 
@@ -151,7 +158,7 @@ impl Machine {
             .stderr(Redirection::Pipe)
             .capture().context("Failed to spawn the command.")?;
         if !subproc.exit_status.success() {
-            return Err(MachineError::Other(subproc.stderr_str()))
+            return Err(MachineError::Unspecified(subproc.stderr_str()))
         }
 
         Ok(())

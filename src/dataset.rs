@@ -5,7 +5,6 @@ use chrono::offset::Utc;
 use itertools::Itertools;
 use regex::Regex;
 use thiserror::Error;
-use anyhow::anyhow;
 use crate::machine::Machine;
 
 #[cfg(test)]
@@ -15,8 +14,8 @@ use crate::S;
 #[derive(Debug)]
 pub struct Dataset {
     fullname: String,
-    pool_idx: usize,
-    relative_idx: Option<usize>,
+    pool_idx: usize,  // fullname[pool_idx] == last char of the pool
+    relative_idx: Option<usize>, // 1st '/' pool/dataset separator
     pub snaps: Vec<Snap>,
 }
 

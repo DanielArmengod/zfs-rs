@@ -6,8 +6,10 @@ mod machine;
 mod replicate;
 mod retention;
 
+use std::process::exit;
 use std::str::FromStr;
 use clap::{App, Arg};
+use thiserror::private::AsDynError;
 use crate::dataset::{Dataset, parse_spec};
 use crate::machine::Machine;
 use crate::replicate::{*};
@@ -126,22 +128,26 @@ fn main() {
                 .long("no-collapse")
         );
 
-    let main_parser = App::new("zfs-rs")
+    let mut main_parser = App::new("zfs-rs")
         .about("Toolkit for common ZFS administrative tasks.")
         .arg(Arg::new("app-verbose").about("Increases verbosity of zfs-rs itself.").short('v'))
         .subcommand(replicate)
         .subcommand(apply_retention)
         .subcommand(comm);
 
-
-    let main_matches = main_parser.get_matches();
+    let main_matches = main_parser.get_matches_mut();
     let app_verbose = main_matches.is_present("app-verbose");
 
-    let result = match main_matches.subcommand() {
-
+    let result : anyhow::Result<String> = match main_matches.subcommand() {
         Some(("replicate", sub_matches)) => {
-            let (mut src_machine, mut src_ds) = parse_spec(sub_matches.value_of("source").expect("No such arg.")).unwrap();
-            let (mut dst_machine, mut dst_ds) = parse_spec(sub_matches.value_of("destination").expect("No such arg.")).unwrap();
+            let (mut src_machine, mut src_ds) = parse_spec(sub_matches.value_of("source").unwrap()).unwrap_or_else(|err| {
+                eprintln!("Can't parse {} as a valid ZFS dataset: {}", sub_matches.value_of("source").unwrap(), err );
+                exit(1);
+            });
+            let (mut dst_machine, mut dst_ds) = parse_spec(sub_matches.value_of("destination").unwrap()).unwrap_or_else(|err| {
+                eprintln!("Can't parse {} as a valid ZFS dataset: {}", sub_matches.value_of("destination").unwrap(), err);
+                exit(1);
+            });
             let take_snap_now: Option<String> =
                 if sub_matches.is_present("take-snap-now") {
                     if sub_matches.is_present("take-snap-now-name") {
@@ -161,30 +167,40 @@ fn main() {
                 take_snap_now,
                 app_verbose,
             };
-            match replicate_dataset(&mut src_machine, &mut src_ds, &mut dst_machine, &mut dst_ds, opts) {
-                Ok(res) => res,
-                Err(e) => format!("{}\n{:?}",e.to_string(), e.chain().collect::<Vec::<_>>()),
-            }
+            replicate_dataset(&mut src_machine, &mut src_ds, &mut dst_machine, &mut dst_ds, opts)
         }
 
-        Some(("apply_retention", sub_matches)) => {
+        Some(("apply-retention", sub_matches)) => {
             let (mut machine, mut ds) = parse_spec(sub_matches.value_of("dataset").unwrap()).unwrap();
             let opts = RetentionOpts {
                 keep_unusual: !sub_matches.is_present("no-keep-unusual"),
                 run_directly: sub_matches.is_present("run-directly")
             };
-            match retention::apply_retention(&mut machine, &mut ds, opts) {
-                Ok(res) => res,
-                Err(e) => e.to_string(),
-            }
+            retention::apply_retention(&mut machine, &mut ds, opts)
         }
 
         Some(("comm", sub_matches)) => {
             unimplemented!()
         }
 
+        None => {
+            main_parser.print_long_help().unwrap();
+            exit(0);
+        }
+
         _ => unreachable!()
     };
 
-    println!("{}", result);
+    match result {
+        Ok(reason) => {
+            println!("Operation completed successfully.\n{}", reason);
+            exit(0);
+        },
+        Err(reason) => {
+            println!("{:?}", reason);
+
+            // match reason.
+            exit(1);
+        }
+    }
 }
