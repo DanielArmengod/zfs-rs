@@ -30,6 +30,12 @@ pub fn replicate_dataset(
         eprintln!("Taking snapshot {}:{}@{} (requested by --take-snap-now).", src_machine, src_ds.fullname(), rand_snap_name);
         src_machine.create_snap(src_ds, &rand_snap_name).context("Failed to take snapshot (requested by --take-snap-now).")?;
     }
+    // TODO: The first thing we do in 'replicate' is to take the src snapshot if requested by -t
+    //  If subsequent steps fail for whatever reason and the uses retries 'replicate' after fixing the underlying causes,
+    //  then 'replicate' will fail because the -t snapshot will already exist.
+    //  SOLUTION: Add logic so that if "Failed to take snapshot" happens, 'replicate' checks whether it was because
+    //  such snapshot already existed, and, check that it is less than 1 day old or whatever; if so proceed with 'replicate'.
+
     src_machine.get_snaps(src_ds).context(format!("Unable to get snapshots for {}.", src_ds))?;  // No handling it if this fails.
     let dst_dataset_existed = match dst_machine.get_snaps(dst_ds) {
         Ok(_) => true,
@@ -63,7 +69,7 @@ pub fn replicate_dataset(
         }
     }
 
-    if !dst_dataset_existed {
+    if !dst_dataset_existed {   // TODO add --init-empty (or --allow-noexistent-dest) in clap and also finish writing the docs.
         if opts.app_verbose {
             eprintln!("Ensuring the destination dataset's ancestors exist.");
         }

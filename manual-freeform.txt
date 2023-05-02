@@ -1,0 +1,77 @@
+NAME:
+zfs-rs replicate - ZFS administration utility to automate the synchronizing of datasets via sending snapshots.
+
+SYNOPSIS:
+zfs-rs replicate [OPTIONS] <source> <destination>
+
+DESCRIPTION:
+zfs-rs replicate automates the process of transferring snapshots between multiple instances of the same dataset. It was developed to automate the transfer of nightly "backups" on production infrastructure.
+
+Given a source and a destination, zfs-rs replicate will obtain the snapshot list for both instances, compute whether it is possible to send a delta from A to B, and execute the appropriate zfs(8) commands.
+
+USAGE:
+Dataset instances <source> and <destination> admit very simple naming rules. At its most basic, a dataset can be specified by naming it as it appears on the output of `zfs list`. An example, assuming two locally-attached zpools named "tank" and "backup":
+
+    zfs-rs replicate tank/webserver-data backup/webserver-data
+
+Only valid characters are alphanumeric, dash '-', underscore '_' and slash '/', the latter only as component delimiter. This is a subset of the allowed character set in ZFS names, and may change in future versions of this program.
+
+
+The dataset can be indicated to exist on a remote, SSH-accessible host by prefixing it with a 'hostname:' part, similar to scp(1):
+
+    zfs-rs replicate tank/webserver-data bk01.company.tld:backup/webserver-data
+
+Both source and destination can be specified to be remote, including simultaneously in a single invocation of zfs-rs replicate. More details on this mode of operation under section ZFS-RS REPLICATE OVER SSH.
+
+
+A relative path can be specified by one (and only one) occurrence of "//" in the <source> instance. All name components that appear the "//" are appended to the destination instance.
+
+    zfs-rs replicate tank/containers/webserver-rootfs bk01.company.tld:backup/containers/webserver-rootfs
+    zfs-rs replicate tank//containers/webserver-rootfs bk01.company.tld:backup
+
+Both invocations are identical. Note that trailing slashes are always illegal; it would be incorrect to write:
+
+    zfs-rs replicate tank//containers/webserver-rootfs bk01.company.tld:backup/  # WRONG!
+
+
+An administrator will normally give idential names to different replicas of the same dataset; this comes naturally but not mandated by ZFS (and neither by zfs-rs replicate). It is perfectly valid to execute the following:
+
+    root@webserver05:~$ zfs-rs replicate tank/webserver-data bk01.company.tld:backup/webserver05-data
+
+Of course, having a different naming scheme on the source and destination pools precludes the use of the relative ("//") paths.
+
+OPTIONS:
+--take-snap-now, --take-snap-now-name=NAME, -t, -TNAME
+    The starting snapshot (s1) will necessarily be the most recent snapshot that exists in both instances of the dataset that is being replicated.
+
+    For the ending snapshot (s2), zfs-rs replicate will by default choose the most recent snapshot (that already exists) on the source instance. If desired (-t, and optionally -T options), zfs-rs replicate can generate a snapshot on the source instance prior to sending and use that as the ending snapshot (s2).
+
+    If only -t is specified, a snapshot name consisting of a prefix ("zfs-rs-" at the time of writing this manual) plus a short, random string of characters will be used.
+
+    A name for the snapshot-to-be-created can be passed in using -T.
+
+--simple-incremental, -i
+    zfs-rs replicate defaults to sending all intervening snapshots between s1 (the last snapshot in common between <source> and <destination>) and s2 (the last snapshot in <source>).
+    If this option is set, the replication stream will not include intervening snapshots, i.e. `zfs send -i` will be used, instead of `zfs send -I`.
+
+--init-empty, --allow-init-empty, --allow-nonexistent-dest
+    zfs-rs replicate is meant to be used primarily in the automated, unattended replication of snapshots from a "live" instance of a dataset to a backup replica. In this scenario it is a hard error to find that the backup destination does not, in fact, exist. zfs-rs replicate therefore refuses to proceed.
+    Further, if using this tool interactively, it is possible to mis-specify the source and destination paths so that they do not point to the same dataset. Consider the following invocation, in which a typo has been inadvertently entered:
+
+        root@production.machine:~$ SNAPSHOT_NAME="nightly-$(date +%F)"  # nightly-2022-10-23
+        root@production.machine:~$ zfs-rs replicate -t -T"$SNAPSHOT_NAME" tank/somedataset backup.machine:tank/somedatasett
+
+    Assume here the administrator means to create a nightly snapshot of some long-lived production dataset and send that over to his backup machine, but he has mistyped the destination name.
+
+    Use this flag to indicate that it is desired to create the dataset in the destination if it does not already exist.
+
+--rollback, -F
+    Allow rolling back the destination dataset. Corresponds with `zfs recv -F`. Please find detailed usage notes under section ZFS-RECV ROLLBACK.
+
+--dry-run, -n
+    Do not actually receive the replication stream into <destination>.
+
+--verbose, -v
+    Increase verbosity. This will print any zfs(8) invocations that this program performs.
+
+

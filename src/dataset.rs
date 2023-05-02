@@ -26,9 +26,23 @@ pub enum CommonOrDivergence<'a> {
     NoneInCommon,
 }
 
+// format!(, value)))
+// format!("", value))
+
+
 #[derive(Error, Debug)]
-#[error("{0}")]
-pub struct ZfsParseError(String);
+pub enum SpecParseError {
+    #[error("{0}: a colon is only allowed at the beginning of a spec, before any slash. It is used to indicate the presence of a remote host, and is not a valid character in ZFS names.")]
+    ColonAfterSlash(String),
+    #[error("{0}: no characters after the machine:dataset separating colon.")]
+    ZeroLengthAfterColon(String),
+    #[error("{0}: a dataset spec cannot begin or end with a slash.")]
+    IllegalSlashes(String),
+    #[error("{0}: no characters other than ASCII alphanumeric, dash, and underscore may appear in dataset names supported by this tool.")]
+    IllegalCharacters(String),
+    #[error("{0}: empty dataset components (think \"zfs create testpool/////dataset\") are not allowed.")]
+    EmptyComponent(String),
+}
 
 impl Dataset {
     pub fn fullname(&self) -> &str { &self.fullname }
@@ -134,7 +148,6 @@ impl Dataset {
     }
 }
 
-
 fn render_tagged_snaps_for_deletion(tagged_snaps: Vec<(bool, &Snap)>) -> String {
     // Returns a string of the form "2021-07-12%2021-07-17,2021-07-19%..." suitable for feeding
     // into "zfs destroy pool/dataset@<output>".
@@ -161,43 +174,29 @@ fn render_tagged_snaps_for_deletion(tagged_snaps: Vec<(bool, &Snap)>) -> String 
 //     }
 // }
 
-pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), ZfsParseError> {
-    if !value.is_ascii() {
-        return Err(ZfsParseError(format!("{}: this string is not valid ASCII and thus cannot be parsed as a ZFS name.", value)));
-    }
-    let value_u8 = value.as_bytes();
-    if value_u8[0] == b'/' || value_u8[value_u8.len()-1] == b'/' {
-        return Err(ZfsParseError(format!("{}: a ZFS name cannot begin or end with a slash.", value)));
-    }
 
-    let mut colon = value.find(':');
-    let slash = value.find('/');
+// parse_spec defined as a free function because it uses both Machine and Dataset.
+pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), SpecParseError> {
+    let first_colon = value.find(':');
+    let first_slash = value.find('/');
 
-    //  Commented out because the lines below are a neater replacement.
-    // colon = match (colon, slash) {
-    //     (Some(cidx), _) if cidx == 0 => colon,
-    //     (Some(cidx), None) => colon,
-    //     (Some(cidx), Some(sidx)) => {
-    //         if cidx < sidx { colon } else { None }
-    //     },
-    //     (None, _) => None,
-    // };
-
-    if let (Some(cidx), Some(sidx)) = (colon, slash) {
+    // Refer to the error message description for ZfsParseError::ColonAfterSlash
+    if let (Some(cidx), Some(sidx)) = (first_colon, first_slash) {
         if cidx > sidx {
-            colon = None;
+            return Err(SpecParseError::ColonAfterSlash(value.into()));
         }
     }
 
-    let machine_spec = match colon {
+    let machine_spec = match first_colon {
         None => &value[0..0],
         Some(colon_idx) => &value[0..colon_idx],
     };
-    let dataset_spec = match colon {
+    let dataset_spec = match first_colon {
         None => &value[..],
         Some(colon_idx) => &value[colon_idx+1..]
     };
 
+    if dataset_spec.len() == 0 { return Err(SpecParseError::ZeroLengthAfterColon(value.into())); }
     Ok((Machine::from_str(machine_spec)?, Dataset::from_str(dataset_spec)?))
 }
 
@@ -205,67 +204,89 @@ pub fn parse_spec(value: &str) -> Result<(Machine, Dataset), ZfsParseError> {
 fn test_parse_spec() {
     let (m, d) = parse_spec("tank").unwrap();
     assert_eq!(m, Machine::Local);
-    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.fullname(), "tank");
     assert_eq!(d.relative(), "");
     assert_eq!(d.pool(), "tank");
 
     let (m, d) = parse_spec("baal:tank").unwrap();
-    match m {
+    match m {  // TODO What a weird (?) way to check for equality on Machine{host: "baal".into()}... ?
         Machine::Remote {ref host } if host == "baal" => (),
         _ => panic!("Machine wasn't constructed properly!"),
     }
-    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.fullname(), "tank");
     assert_eq!(d.relative(), "");
     assert_eq!(d.pool(), "tank");
 
     let (m, d) = parse_spec(":tank").unwrap();
     assert_eq!(m, Machine::Local);
-    assert_eq!(d.fullname, "tank");
+    assert_eq!(d.fullname(), "tank");
     assert_eq!(d.relative(), "");
     assert_eq!(d.pool(), "tank");
 
-    let (m, d) = parse_spec(":tank:lareputa").unwrap();
-    assert_eq!(m, Machine::Local);
-    assert_eq!(d.fullname, "tank:lareputa");
-    assert_eq!(d.relative(), "");
-    assert_eq!(d.pool(), "tank:lareputa");
+    let err = parse_spec(":tank:lareputa");
+    assert!(matches!(err, Err(SpecParseError::IllegalCharacters(_))));
 
-    let (m, d) = parse_spec(":tank:lareputa/a/path/to/dataset").unwrap();
-    assert_eq!(m, Machine::Local);
-    assert_eq!(d.fullname, "tank:lareputa/a/path/to/dataset");
-    assert_eq!(d.relative(), "");
-    assert_eq!(d.pool(), "tank:lareputa");
+    let err = parse_spec(":tank:lareputa/a/path//to/a/relative/dataset");
+    assert!(matches!(err, Err(SpecParseError::IllegalCharacters(_))));
 
-    let (m, d) = parse_spec(":tank:lareputa/a/path//to/a/relative/dataset").unwrap();
-    assert_eq!(m, Machine::Local);
-    assert_eq!(d.fullname, "tank:lareputa/a/path/to/a/relative/dataset");
-    assert_eq!(d.relative(), "to/a/relative/dataset");
-    assert_eq!(d.pool(), "tank:lareputa");
-
-    let (m, d) = parse_spec("server.company.tld:tank:lareputa/a/path//to/a/relative/dataset").unwrap();
-    match m {
+    let (m, d) = parse_spec("server.company.tld:tank/a/path//to/a/relative/dataset").unwrap();
+    match m {  // TODO What a weird (?) way to check for equality on Machine{host: "baal".into()}... ?
         Machine::Remote {ref host } if host == "server.company.tld" => (),
         _ => panic!("Machine wasn't constructed properly!"),
-    }    assert_eq!(d.fullname, "tank:lareputa/a/path/to/a/relative/dataset");
+    }
+    assert_eq!(d.fullname(), "tank/a/path/to/a/relative/dataset");
     assert_eq!(d.relative(), "to/a/relative/dataset");
-    assert_eq!(d.pool(), "tank:lareputa");
+    assert_eq!(d.pool(), "tank");
 
-    let r = parse_spec("somehost:an_invâlid_pòól/somedataset");
-    assert!(r.is_err());
+    let err = parse_spec("somehost:an_invâlid_pòól/somedataset");
+    assert!(matches!(err, Err(SpecParseError::IllegalCharacters(_))));
 
-    let r = parse_spec("somehost:but/trailing/slash/");
-    assert!(r.is_err());
+    let err = parse_spec("somehost:but/trailing/slash/");
+    assert!(matches!(err, Err(SpecParseError::IllegalSlashes(_))));
+}
+
+#[test]
+fn test_append_relative() {
+    let (_, d1) = parse_spec("ganon//lxc/web-ng").unwrap();
+    let (_, mut d2) = parse_spec("bk:zelda").unwrap();
+    d2.append_relative(&d1);
+    assert_eq!(d1.relative(), "lxc/web-ng");
+    assert_eq!(d2.fullname(), "zelda/lxc/web-ng");
+    assert_eq!(d2.pool(), "zelda");
+
+    let (_, d1) = parse_spec("tank/deluge").unwrap();
+    let (_, mut d2) = parse_spec("baccu/deluge").unwrap();
+    d2.append_relative(&d1);
+    assert_eq!(d1.relative(), "");
+    assert_eq!(d2.fullname(), "baccu/deluge");
+    assert_eq!(d2.pool(), "baccu");
 }
 
 impl FromStr for Dataset {
-    type Err = ZfsParseError;
+    type Err = SpecParseError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        assert!(value.len() > 0, "Passed a zero-length string to Dataset::from_str!");
+        for char in value.chars() {
+            if ! (char.is_ascii_alphanumeric() || char == '-' || char == '_' || char == '/') {
+                return Err(SpecParseError::IllegalCharacters(value.into()));
+            }
+        }
+        let value_u8 = value.as_bytes();
+        if value_u8[0] == b'/' || value_u8[value_u8.len()-1] == b'/' {
+            return Err(SpecParseError::IllegalSlashes(value.into()));
+        }
+
+        // Empty dataset components (think "zfs create testpool/////dataset") are not allowed.
+        // Because we want to support doubleslash notation to signal relative-path copying, we must take care to remove only 1 instance of "//" and then check for additional instances of "//" which would indicate empty path components.
         let doubleslash = value.find("//");
         let fullname = match doubleslash {
-            Some(_) => value.replace("//", "/"),
+            Some(_) => value.replacen("//", "/", 1),
             None => value.to_string(),
         };
-        let pool_idx : usize = fullname.find('/').unwrap_or(fullname.len());
+        let exists_some_empty_path_component = fullname.find("//").is_some();
+        if exists_some_empty_path_component { return Err(SpecParseError::EmptyComponent(value.into())); }
+
+        let pool_idx = fullname.find('/').unwrap_or(fullname.len());
         let relative_idx = doubleslash;
 
         Ok(Dataset { fullname, snaps: Vec::new(), pool_idx, relative_idx })

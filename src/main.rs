@@ -1,5 +1,5 @@
 #![deny(unused_must_use)]
-#![allow(unused_imports, dead_code)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
+#![allow(unused_imports, dead_code, unused_variables)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
 
 mod dataset;
 mod machine;
@@ -197,7 +197,7 @@ fn main() {
             exit(0);
         },
         Err(reason) => {
-            println!("{:?}", reason);
+            println!("{:#}", reason);
 
             // match reason.
             exit(1);

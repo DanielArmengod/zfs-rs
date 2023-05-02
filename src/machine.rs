@@ -1,8 +1,8 @@
 use std::str::FromStr;
 use std::string;
 use anyhow::Context;
-use crate::dataset::{Dataset, Snap, ZfsParseError};
-use subprocess::{Exec, Redirection};
+use crate::dataset::{Dataset, Snap, SpecParseError};
+use subprocess::{Exec, PopenError, Redirection};
 use chrono::offset::Utc;
 use chrono::TimeZone;
 use itertools::Itertools;
@@ -16,15 +16,15 @@ pub enum MachineError {
     #[error("No such dataset.")]
     NoDataset,
     #[error("Invalid character in snapshot name.")]
-    InvalidCharacter,
+    IllegalZFSName,
     #[error("The name is already in use.")]
     NameAlreadyInUse,
-    #[error("ZFS administrative commands cannot be found in {}. Hint: is ZFS installed in the target machine, and are you root there?", .machine)]
-    NoZFSRuntime{machine: String},
-    #[error("Unspecified error: {0}")]
-    Unspecified(String),
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("ZFS administrative commands not in PATH. Hint: is ZFS installed in the target machine, and are you root there?")]
+    NoZFSRuntime,
+    #[error("Failed to spawn command: {0}")]
+    SubprocessError(#[from] PopenError),
+    #[error("Unknown ZFS command execution error: {0}")]
+    ZFSCommandExecutionError(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -37,7 +37,7 @@ pub enum Machine {
 }
 
 impl FromStr for Machine {
-    type Err = ZfsParseError;
+    type Err = SpecParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.len() {
             0 => Machine::Local,
@@ -61,15 +61,16 @@ impl Machine {
         let subproc = Exec::shell(cmd)
             .stdout(Redirection::Pipe)
             .stderr(Redirection::Pipe)
-            .capture().context("Failed to spawn the command.")?;
+            // .capture().context("Failed to spawn the command.")?;
+            .capture()?;
         if !subproc.exit_status.success() {
             return if subproc.stderr_str().ends_with("dataset does not exist\n") {
                 Err(MachineError::NoDataset)
             } else if subproc.stderr_str().starts_with("sh: 1") {
-                Err(MachineError::NoZFSRuntime{machine: self.to_string()})
+                Err(MachineError::NoZFSRuntime)
             }
             else {
-                Err(MachineError::Unspecified(subproc.stderr_str()))
+                Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
             }
         }
         let stdout = subproc.stdout_str();
@@ -128,16 +129,17 @@ impl Machine {
         let subproc = Exec::shell(cmd)
             .stdout(Redirection::Pipe)
             .stderr(Redirection::Pipe)
-            .capture().context("Failed to spawn the command.")?;
+            // .capture().context("Failed to spawn the command.")?;
+            .capture()?;
         if !subproc.exit_status.success() {
             return if subproc.stderr_str().contains("invalid character") {
-                Err(MachineError::InvalidCharacter)
+                Err(MachineError::IllegalZFSName)
             } else if subproc.stderr_str().contains("dataset does not exist") {
                 Err(MachineError::NoDataset)
             } else if subproc.stderr_str().contains("dataset already exists") {
                 Err(MachineError::NameAlreadyInUse)
             } else {
-                Err(MachineError::Unspecified(subproc.stderr_str()))
+                Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
             }
         }
 
@@ -156,9 +158,10 @@ impl Machine {
         let subproc = Exec::shell(cmd)
             .stdout(Redirection::Pipe)
             .stderr(Redirection::Pipe)
-            .capture().context("Failed to spawn the command.")?;
+            // .capture().context("Failed to spawn the command.")?;
+            .capture()?;
         if !subproc.exit_status.success() {
-            return Err(MachineError::Unspecified(subproc.stderr_str()))
+            return Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
         }
 
         Ok(())
@@ -204,14 +207,22 @@ fn test_parse_zfs() {
 }
 
 #[test]
-fn test_remotes() -> Result<(), anyhow::Error>{
+fn test_remotes() -> Result<(), MachineError>{
     //TODO This functionality interacts with the environment and should probably not be tested here.
 
-    // let ml = Machine::Local;
-    let mr = Machine::Remote { host: "baal".to_string() };
-    let mut d = Dataset::from_str("tank/deluge")?;
-    // ml.get_snaps(&mut d);
-    mr.get_snaps(&mut d)?;
+    let (m, mut d) = crate::parse_spec("baal:tank/deluge").unwrap();
+    m.get_snaps(&mut d)?;
     println!("{:#?}", d);
+    Ok(())
+}
+
+#[test]
+fn test_local() -> Result<(), MachineError>{
+    //TODO This functionality interacts with the environment and should probably not be tested here.
+
+    let (m, mut d) = crate::parse_spec("tank/deluge").unwrap();
+    let res = m.get_snaps(&mut d);
+    println!("{}", res.as_ref().unwrap_err());
+    res?;
     Ok(())
 }
