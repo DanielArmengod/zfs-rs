@@ -1,5 +1,5 @@
 #![deny(unused_must_use)]
-#![allow(unused_imports, dead_code, unused_variables)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
+#![allow(unused_imports)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
 
 mod dataset;
 mod machine;
@@ -17,7 +17,7 @@ use crate::retention::{*};
 
 #[allow(non_snake_case)]
 #[inline(always)]
-fn S(s: &str) -> String {s.to_owned()}
+// fn S(s: &str) -> String {s.to_owned()}
 
 
 fn get_n_random_chars(n: usize) -> String {
@@ -159,13 +159,15 @@ fn main() {
                     None
                 };
             let opts = ReplicateDatasetOpts {
+                use_rollback_flag_on_recv: false,
                 dryrun_recv: sub_matches.is_present("dry-run"),
                 verbose_recv: sub_matches.is_present("verbose"),
                 verbose_send: sub_matches.is_present("verbose"),
                 simple_incremental: sub_matches.is_present("simple-incremental"),
-                do_rollback: sub_matches.is_present("rollback"),
                 take_snap_now,
                 app_verbose,
+                allow_divergent_destination: false,
+                allow_nonexistent_destination: false,
             };
             replicate_dataset(&mut src_machine, &mut src_ds, &mut dst_machine, &mut dst_ds, opts)
         }
@@ -179,7 +181,7 @@ fn main() {
             retention::apply_retention(&mut machine, &mut ds, opts)
         }
 
-        Some(("comm", sub_matches)) => {
+        Some(("comm", _sub_matches)) => {
             unimplemented!()
         }
 
@@ -193,7 +195,7 @@ fn main() {
 
     match result {
         Ok(reason) => {
-            println!("Operation completed successfully.\n{}", reason);
+            println!("{}", reason);
             exit(0);
         },
         Err(reason) => {

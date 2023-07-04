@@ -1,34 +1,30 @@
---verbose should actually tell what is happening
-    -> command invocations
-    -> decisions taken based on facts discovered (e.g. "snapshot YYYY-MM-DD found last in common between ds_a & ds_b; proceeding to <whatever>."
+### zfs-rs replicate tank/webdata backup/webdata ###
 
-move "replicate.rs", "retention.rs" into a submodule called "apps" (Programming Rust pg.178)
+build cmdline 1
+	zfs send --compressed --embed --large-block --props [--verbose] -i @MOST_RECENT_SOURCE_SNAPSHOT SOURCE_DATASET@MOST_RECENT_COMMON_SNAPSHOT
+	
+build cmdline 2 -> 
+    zfs recv [--opts...] DESTINATION_DATASET
+    
 
-NEEDS the --init-nonexistent (or --allow-nonexistent or whatever) flag to avoid performing a full send when what you actually wanted was an incremental synchronization, but fucked up specifying the destination (or source) argument.
 
-A different Popen library should be used. (which?)
 
-struct Dataset should invalidate (?) snaps every time it is "modified", such as by Machine::recv, Machine::delete_snaps, Dataset::append_relative, etc.
-    Maybe the "old" snap vector can be kept in an additional Dataset field, such that user-code can access it and verify that changes (or lack thereof) are correct after a modifying operation?
 
-Proper documentation should be written.
 
---------------------------------
 
-March 2022.
 
-Lo que más urgentemente se necesita aqui es ilustrar las diferentes invocaciones que puede tener el programa,
-así como el resultado esperado de cada una de ellas.
 
-En particular, hace falta documentar y estandarizar el formato que tiene `dataset_spec`: que significan los siguientes:
-
-DOCUMENTADO:
-
-zfs-rs replicate ganon/webdata zelda/webdata
-zfs-rs replicate ganon//webdata zelda
-
-zfs-rs replicate ganon//webdata bk.pangea.org:zelda
-
-zfs-rs replicate tank//deluge baccu
-
-zfs-rs replicate ganon//lxc/webdata bk.pangea.org:zelda   -> zfs list ... ganon/lxc/webdata; ssh bk.pangea.org zfs list ... zelda/lxc/webdata; zfs send -i@... ganon/lxc/webdata@... | ssh bk.pangea.org zfs recv
+Lisf of things to do:
+    * Implement comm
+    * Implement full send
+    * Improve the order of operations in replicate, particularly:
+        * Take the snapshot (-t) only after executing find_mrcud(), if it is determined that
+            SourceHasMore, or
+            UpToDate, or
+            opts.allow_divergent_destination and
+                DestinationHasMore, or
+                Divergence
+    * Implement spinny-twirly :emoji: progress bars
+    * Rework manual
+    * Rework clap parsing
+    * Update dependencies

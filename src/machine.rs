@@ -1,5 +1,6 @@
 use std::str::FromStr;
-use std::string;
+use std::{io, process, string};
+use std::process::{Child, Command, Output, Stdio};
 use anyhow::Context;
 use crate::dataset::{Dataset, Snap, SpecParseError};
 use subprocess::{Exec, PopenError, Redirection};
@@ -7,8 +8,6 @@ use chrono::offset::Utc;
 use chrono::TimeZone;
 use itertools::Itertools;
 use thiserror::Error;
-// use string::ToString;
-use crate::S;
 
 
 #[derive(Error,Debug)]
@@ -22,7 +21,7 @@ pub enum MachineError {
     #[error("ZFS administrative commands not in PATH. Hint: is ZFS installed in the target machine, and are you root there?")]
     NoZFSRuntime,
     #[error("Failed to spawn command: {0}")]
-    SubprocessError(#[from] PopenError),
+    SubprocessError(io::Error),
     #[error("Unknown ZFS command execution error: {0}")]
     ZFSCommandExecutionError(String),
 }
@@ -41,105 +40,134 @@ impl FromStr for Machine {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.len() {
             0 => Machine::Local,
-            _ => Machine::Remote {host: S(s)},
+            _ => Machine::Remote { host: s.to_string() }  // TODO: Check that the string slice `s` passed in is a valid host name
         })
     }
 }
 
+trait OutputExt {
+    fn stdout_str(&self) -> String;
+    fn stderr_str(&self) -> String;
+}
+
+impl OutputExt for Output {
+    fn stdout_str(&self) -> String {
+        String::from_utf8_lossy(&self.stdout).into_owned()
+    }
+
+    fn stderr_str(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).into_owned()
+    }
+}
+
+
+/// Previous versions of this program follow the pattern of building a shell command line to invoke ZFS commands.
+/// I wanted to switch to building the exec(2) syscall itself, to protect against shell injection attacks and generally separate data from code.
+/// Unfortunately sshd always invokes a shell on the remote side. See https://unix.stackexchange.com/q/205567/
+/// So whatever; in a future version of this program I'll could go with environment variables and quoted shell expansion, for untrusted user input. Idk.
 impl Machine {
     pub fn _get_datasets(&self) -> Vec<()> {todo!()}
 
+    /// Prepends `ssh {machine.user}@{machine.host} -- ` to `command` if `self` is a remote host.
+    /// Prepends `sh -c ` to `command` if `self` is the local host.
+    fn prepare_cmd(&self, command: &str) -> Command {
+        let mut cmd : Command;
+        match self {
+            Machine::Local => {
+                cmd = Command::new("sh");
+                cmd.arg("-c");
+            }
+            Machine::Remote { host } => {
+                cmd = Command::new("ssh");
+                cmd
+                    //.arg(format!("{user}@{host}"))
+                    .arg(format!("{host}"))
+                    .arg("--");
+            }
+        };
+        cmd.arg(command);
+        return cmd;
+    }
+
+    /// Populates `dataset.snaps` with data fetched from the Machine.
     pub fn get_snaps(&self, dataset: &mut Dataset) -> Result<(), MachineError> {
-        // Populates the &mut Dataset.snaps with data fetched from the Machine.
-        // Returns () if successful (even though .snaps might be an empty vector).
-        // May return NoDataset as an Error if something went wrong
-        let mut cmd = format!("zfs list -Hp -o name,creation,guid,userrefs -t snapshot -d1 {}", dataset.fullname());
-        if let Machine::Remote{ host} = self {
-                cmd = format!("ssh {} -- '{}'", host, cmd);
-        }
-        // TODO: Use .communicate() instead of .capture() to support timeout settings.
-        let subproc = Exec::shell(cmd)
-            .stdout(Redirection::Pipe)
-            .stderr(Redirection::Pipe)
-            // .capture().context("Failed to spawn the command.")?;
-            .capture()?;
-        if !subproc.exit_status.success() {
-            return if subproc.stderr_str().ends_with("dataset does not exist\n") {
+        let mut cmd= self.prepare_cmd(&format!(
+            "zfs list -Hp -o name,creation,guid,userrefs -t snapshot -d1 {}", dataset.fullname()
+        ));
+        let result = cmd.output()
+            .map_err(|e| MachineError::SubprocessError(e))?;   // TODO <- timeout
+        if !result.status.success() {
+            return if result.stderr.ends_with(b"dataset does not exist\n") {
                 Err(MachineError::NoDataset)
-            } else if subproc.stderr_str().starts_with("sh: 1") {
+            } else if result.stderr.starts_with(b"sh: ") {
                 Err(MachineError::NoZFSRuntime)
             }
             else {
-                Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
+                Err(MachineError::ZFSCommandExecutionError(result.stderr_str()))
             }
         }
-        let stdout = subproc.stdout_str();
-        dataset.snaps = parse_zfs(&stdout);
+        dataset.snaps = parse_zfs(&result.stdout_str());
 
         Ok(())
     }
 
-    pub fn send_from_s_till_last(&self, ds: &Dataset, s: &Snap, simple_incremental: bool, verbose: bool) -> Exec {
+    pub fn send_from_s_till_newest(&self, ds: &Dataset, s: &Snap, simple_incremental: bool, verbose: bool) -> Result<Child, MachineError> {
         assert_ne!(ds.newest_snap(), s);  // It is an error to do zfs send -i @today tank/foobar@today.
         let i = if simple_incremental {"i"} else {"I"};
         let verbose = if verbose {"v"} else {""};
         let src_snap = &s.name;
         let ds_name = ds.fullname();
         let dst_snap = &ds.snaps.last().unwrap().name;
-        let mut cmd = format!("zfs send -cp{v}Le{i} @{src_snap} {ds_name}@{dst_snap}", i=i, v=verbose, src_snap=src_snap, ds_name=ds_name, dst_snap=dst_snap);
-        if let Machine::Remote {host} = self {
-            cmd = format!("ssh {} -- '{}'", host, cmd);
-        }
-
-        Exec::shell(cmd)
+        let mut cmd = self.prepare_cmd(&format!(
+            "zfs send -cp{v}Le{i} @{src_snap} {ds_name}@{dst_snap}", i=i, v=verbose, src_snap=src_snap, ds_name=ds_name, dst_snap=dst_snap
+        ));
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn().map_err(|e| MachineError::SubprocessError(e))
     }
 
-    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap, verbose: bool) -> Exec {
+    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap, verbose: bool) -> Result<Child, MachineError> {
         let verbose = if verbose {"v"} else {""};
         let snap = &s.name;
         let ds_name = ds.fullname();
-        let mut cmd = format!("zfs send -cp{v}Le {ds_name}@{snap}", v=verbose, snap=snap, ds_name=ds_name);
-        if let Machine::Remote {host} = self {
-            cmd = format!("ssh {} -- '{}'", host, cmd);
-        }
-
-        Exec::shell(cmd)
+        let mut cmd = self.prepare_cmd(&format!(
+            "zfs send -cp{v}Le {ds_name}@{snap}", v=verbose, snap=snap, ds_name=ds_name
+        ));
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn().map_err(|e| MachineError::SubprocessError(e))
     }
 
-    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Exec {
+    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Result<Child, MachineError> {
         let dryrun = if dryrun {"-n"} else {""};
         let rollback = if rollback {"-F"} else {""};
         let verbose = if verbose {"-v"} else {""};
         let dst = ds.fullname();
-        let mut cmd = format!("zfs recv {rollback} {dryrun} {verbose} {dst}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst=dst);
-        if let Machine::Remote {host} = self {
-            cmd = format!("ssh {} -- '{}'", host, cmd);
-        }
-
-        Exec::shell(cmd)
+        let mut cmd = self.prepare_cmd(&format!(
+            "zfs recv {rollback} {dryrun} {verbose} {dst}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst=dst
+        ));
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn().map_err(|e| MachineError::SubprocessError(e))
     }
 
     pub fn create_snap(&self, ds: &Dataset, name: &str) -> Result<(), MachineError> {
-        let mut cmd = format!("zfs snapshot {}@{}", ds.fullname(), name);
-        if let Machine::Remote {host} = self {
-            cmd = format!("ssh {} -- '{}'", host, cmd);
-        }
+        let mut cmd = self.prepare_cmd(&format!(
+            "zfs snapshot {}@{}", ds.fullname(), name
+        ));
+        let result = cmd.output()
+            .map_err(|e| MachineError::SubprocessError(e))?;   // TODO <- timeout
 
-        // TODO: Use .communicate() instead of .capture() to support timeout settings.
-        let subproc = Exec::shell(cmd)
-            .stdout(Redirection::Pipe)
-            .stderr(Redirection::Pipe)
-            // .capture().context("Failed to spawn the command.")?;
-            .capture()?;
-        if !subproc.exit_status.success() {
-            return if subproc.stderr_str().contains("invalid character") {
+        if !result.status.success() {
+            return if result.stderr_str().contains("invalid character") {
                 Err(MachineError::IllegalZFSName)
-            } else if subproc.stderr_str().contains("dataset does not exist") {
+            } else if result.stderr_str().contains("dataset does not exist") {
                 Err(MachineError::NoDataset)
-            } else if subproc.stderr_str().contains("dataset already exists") {
+            } else if result.stderr_str().contains("dataset already exists") {
                 Err(MachineError::NameAlreadyInUse)
             } else {
-                Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
+                Err(MachineError::ZFSCommandExecutionError(result.stderr_str()))
             }
         }
 
@@ -147,6 +175,8 @@ impl Machine {
     }
 
     pub fn create_ancestors(&self, ds: &Dataset) -> Result<(), MachineError> {
+        #![allow(warnings)]
+        unimplemented!(); /*
         let parts: Vec<&str> = ds.fullname().split('/').collect();
         let except_last = parts.iter().take(parts.len()-1).join("/");
         let mut cmd = format!("zfs create -p {}", except_last);
@@ -165,6 +195,7 @@ impl Machine {
         }
 
         Ok(())
+        */
     }
 }
 
@@ -207,6 +238,7 @@ fn test_parse_zfs() {
 }
 
 #[test]
+#[ignore]
 fn test_remotes() -> Result<(), MachineError>{
     //TODO This functionality interacts with the environment and should probably not be tested here.
 
@@ -217,6 +249,7 @@ fn test_remotes() -> Result<(), MachineError>{
 }
 
 #[test]
+#[ignore]
 fn test_local() -> Result<(), MachineError>{
     //TODO This functionality interacts with the environment and should probably not be tested here.
 

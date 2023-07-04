@@ -1,8 +1,7 @@
 use std::fmt::Debug;
 use anyhow::{bail, Context};
 use crate::machine::{Machine, MachineError};
-use crate::dataset::{Dataset, CommonOrDivergence::*};
-use crate::S;
+use crate::dataset::{Dataset, };
 
 #[derive(Copy, Clone, Debug)]
 pub struct RetentionOpts {
@@ -10,6 +9,7 @@ pub struct RetentionOpts {
     pub run_directly: bool,
 }
 
+#[allow(warnings)]
 pub fn apply_retention(
     machine : &mut Machine,
     ds : &mut Dataset,

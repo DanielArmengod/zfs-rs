@@ -1,5 +1,9 @@
 use std::cmp::{max, Ordering};
+use std::cmp::Ordering::{Less, Equal, Greater};
+use std::io::Write;
 use std::str::FromStr;
+use self::Comm::*;
+use self::MRCUD::*;
 use chrono::{Datelike, DateTime, Duration};
 use chrono::offset::Utc;
 use itertools::Itertools;
@@ -9,25 +13,86 @@ use crate::machine::Machine;
 
 #[cfg(test)]
 use crate::machine::parse_zfs;
-use crate::S;
 
+/// Represents a ZFS dataset
 #[derive(Debug)]
 pub struct Dataset {
+    /// Contains the full name of a dataset, pool included, with path separators (slashes) normalized.
+    /// Example: "tank/webdata".
+    /// Example: "tank" (the pool root is a dataset too).
+    /// Not example: "nas1:tank/webdata" (includes machine specification).
+    /// Not example: "tank//lxc/webserv" (includes double-slash, which is zfs-backup-tools -specific).
     fullname: String,
+    /// Points to the first slash.
+    /// ```text
+    /// Example: "tank/webdata"
+    ///               ^pool_idx = 4
+    /// ```
     pool_idx: usize,  // fullname[pool_idx] == last char of the pool
+    /// Points to where the double-slash separator was, before normalization.
+    /// ```text
+    /// Example: "tank//lxc/webserv" - normalized to - "tank/lxc/webserv"
+    ///                                                     ^relative_idx = Some(4)
+    /// ```
     relative_idx: Option<usize>, // 1st '/' pool/dataset separator
+    /// Snapshots must always be ordered by creation time, oldest first.
     pub snaps: Vec<Snap>,
 }
 
+/// Describes the relationship of two sets of snapshots belonging to the same datset.
+/// Short for "Most Recent Common, Up-to-date, or Divergence"
 #[derive(Debug)]
-pub enum CommonOrDivergence<'a> {
-    Common(&'a Snap),
-    Divergence(&'a Snap),
+pub enum MRCUD<'a> {
+    /// No snapshots in common.
     NoneInCommon,
+    /// The most recent snapshot is also the last snapshot in both sides.
+    UpToDate(&'a Snap),
+    /// There is at least one snapshot in common.
+    /// Both sides diverge (have further snapshots) after the most recent common snapshot.
+    Divergence(&'a Snap),
+    /// There is at least one snapshot in common.
+    /// The destination side has more snapshots after that one.
+    DestinationHasMore(&'a Snap),
+    /// There is at least one snapshot in common.
+    /// The source side has more snapshots after that one.
+    SourceHasMore(&'a Snap),
 }
 
-// format!(, value)))
-// format!("", value))
+/// Take two copies of the same datset, each with its own set of snapshots.
+/// Find which case they fall into according to the [MRCUD] enum.
+pub fn find_mrcud<'a>(source: &'a Dataset, destination: &'_ Dataset) -> MRCUD<'a> {
+    use Comm::*;
+    let (comm_vector, most_recent_common_idx) = source.comm(destination);
+    let Some(most_recent_common_idx) = most_recent_common_idx else {
+        return NoneInCommon;
+    };
+    let most_recent_common_snap = comm_vector[most_recent_common_idx].1;
+    let most_recent_common_snap = unsafe {
+        // SAFETY: Dataset::comm(&self, &other) guarantees that, for any snapshot that belongs
+        // in either LEFT or BOTH, its reference will be taken from the self.snaps side.
+        std::mem::transmute::<&Snap, &'a Snap>(most_recent_common_snap)
+    };
+    let remaining = &comm_vector[most_recent_common_idx+1..];
+    let mut source_has_more = false;
+    let mut destination_has_more = false;
+    for (side, _) in remaining {
+        match side {
+            LEFT => source_has_more = true,
+            RIGHT => destination_has_more = true,
+            BOTH => unreachable!("There is a logic bug somewhere; we shouldn't be able to see snapshots present in both sides at this point in the code."),
+        }
+        if source_has_more && destination_has_more {
+            // No need to keep checking, we already know that there is divergence.
+            break;
+        }
+    }
+    match (source_has_more, destination_has_more) {
+        (false, false) => UpToDate(most_recent_common_snap),
+        (true, false) => SourceHasMore(most_recent_common_snap),
+        (false, true) => DestinationHasMore(most_recent_common_snap),
+        (true, true) => Divergence(most_recent_common_snap)
+    }
+}
 
 
 #[derive(Error, Debug)]
@@ -44,6 +109,13 @@ pub enum SpecParseError {
     EmptyComponent(String),
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum Comm {
+    LEFT,
+    BOTH,
+    RIGHT,
+}
+
 impl Dataset {
     pub fn fullname(&self) -> &str { &self.fullname }
     pub fn pool(&self) -> &str { &self.fullname[0..self.pool_idx] }
@@ -53,66 +125,49 @@ impl Dataset {
         } else { "" }
     }
 
-    pub fn comm<'a, 'b, 'c>(&'a self, other: &'b Self) -> Vec<(u8, &'c Snap)>
+    /// Walk two time-ordered vectors of snapshots.
+    /// Return:
+    ///   * A single vector containing a reference to each unique snapshot, tagged as it appears on the left side, the right side, or both sides.
+    ///   * The index within the previous vector of the last snapshot encountered that is in both collections, if any.
+    /// The return vector has the same sort order as the input vectors.
+    /// If the input is sorted oldest snapshot first, then the second return value is useful as it is the "most recent common snapshot".
+    /// The input vectors are not checked for proper sort order, and the results are undefined if they are not properly sorted.
+    pub fn comm<'a, 'b, 'c>(&'a self, other: &'b Self) -> (Vec<(Comm, &'c Snap)>, Option<usize>)
         where
             'a: 'c,
             'b: 'c,
     {
-        let max_cap = max(self.snaps.len(), other.snaps.len());
-        let mut retval = Vec::with_capacity(max_cap);
+        let mut retval = Vec::with_capacity(self.snaps.len() + other.snaps.len());
+        let mut retval2 = None;
         let mut snaps_self = self.snaps.iter().peekable();
         let mut snaps_other = other.snaps.iter().peekable();
-        let (i, snaps_left) = loop {
-            if snaps_self.peek().is_none()  { break (2, &mut snaps_other) }
-            if snaps_other.peek().is_none() { break (0, &mut snaps_self) }
+        let (last_side, snaps_left) = loop {
+            if snaps_self.peek().is_none()  { break (RIGHT, &mut snaps_other) }
+            if snaps_other.peek().is_none() { break (LEFT, &mut snaps_self) }
             let snap_self = *snaps_self.peek().unwrap();
             let snap_other = *snaps_other.peek().unwrap();
-            match snap_self.creation.cmp(&snap_other.creation) {
-                Ordering::Less => {
-                    retval.push((0, snap_self));
+            match snap_self.partial_cmp(&snap_other) {
+                Some(Less) => {
+                    retval.push((LEFT, snap_self));
                     snaps_self.next();
                 }
-                Ordering::Equal => {
-                    retval.push((1, snap_self));
+                Some(Equal) => {
+                    retval2 = Some(retval.len());
+                    retval.push((BOTH, snap_self));
                     snaps_self.next();
                     snaps_other.next();
                 }
-                Ordering::Greater => {
-                    retval.push((2, snap_other));
+                Some(Greater) => {
+                    retval.push((RIGHT, snap_other));
                     snaps_other.next();
                 }
+                None => panic!("Found two snapshots which aren't comparable (i.e. l.guid != r.guid && l.creation == r.creation")
             }
         };
         for remaining in snaps_left {
-            retval.push((i, remaining))
+            retval.push((last_side, remaining))
         }
-        retval
-    }
-
-    pub fn last_common_or_divergence<'a, 'b>(&'a self, other: &'b Self) -> CommonOrDivergence<'a>
-    // It is convention to have `self` be the "replication source" and `other` the "replication target".
-    // Therefore, it is allowed for `self` to have additional snapshots after the last one in common
-    // (it is assumed those will be "sent" to other).
-    // `other`, however, must have no more snapshots after the last in common; otherwise, Divergence.
-    {
-        let v = self.comm(other);
-        // Get the (index of the) last snapshot present in both datasets.
-        let last_common = v.iter()    // Iterator over [&(1,&Snap), &(1,&Snap), &(0,&Snap), ...]
-            .enumerate()                            // [(0,&(1,&Snap)), (1,&(1,&Snap)), (2,&(0,&Snap)), ...]
-            .rev().find(|&(_,tup)| tup.0 == 1);
-        match last_common {
-            None => return CommonOrDivergence::NoneInCommon,  //TODO implicit return OK?
-            Some((idx, tup)) => {
-                let mut rem = (&v[idx..]).iter();
-                // There can be no Snapshot only in OTHER within this slice.
-                unsafe {
-                    match rem.find(|&tup| tup.0 == 2) {
-                        None => CommonOrDivergence::Common(std::mem::transmute::<&'_ Snap, &'a Snap>(tup.1)),
-                        Some(_) => CommonOrDivergence::Divergence(std::mem::transmute::<&'_ Snap, &'a Snap>(tup.1)),
-                    }
-                }
-            }
-        }
+        (retval, retval2)
     }
 
     fn tag_snaps_for_deletion<F>(&self, f: F) -> Vec<(bool, &Snap)>
@@ -133,7 +188,7 @@ impl Dataset {
     }
 
     pub fn oldest_snap(&self) -> &Snap {
-        &self.snaps[0]
+        self.snaps.first().unwrap()
     }
 
     pub fn newest_snap(&self) -> &Snap {
@@ -262,7 +317,7 @@ fn test_append_relative() {
     assert_eq!(d2.pool(), "baccu");
 }
 
-impl FromStr for Dataset {
+impl std::str::FromStr for Dataset {
     type Err = SpecParseError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         assert!(value.len() > 0, "Passed a zero-length string to Dataset::from_str!");
@@ -338,13 +393,14 @@ fn test_comm() {
         "tank/webdata",
         include_str!("dataset/tests/tank_webdata.list")
     );
-    let comm = zelda_webdata.comm(&tank_webdata);
+    let (comm, idx) = zelda_webdata.comm(&tank_webdata);
     let res = format!("{:#?}\n", comm);
     assert_eq!(res, include_str!("dataset/tests/test_comm.result"));
+    assert_eq!(idx, Some(177));
 }
 
 #[test]
-fn test_last_common_or_divergence() {
+fn test_mrcud() {
     let tank_webdata = build_fake_dataset(
         "tank/webdata",
         include_str!("dataset/tests/tank_webdata.list")
@@ -361,11 +417,11 @@ fn test_last_common_or_divergence() {
         "zelda/webdata",
         include_str!("dataset/tests/baal_tank_phone.list")
     );
-    let none = tank_webdata.last_common_or_divergence(&baal_phone);
-    let common = tank_webdata.last_common_or_divergence(&zelda_webdata);
-    let divergence = tank_webdata.last_common_or_divergence(&zelda_webdata_divergence);
+    let none = find_mrcud(&tank_webdata, &baal_phone);
+    let source_has_more = find_mrcud(&tank_webdata, &zelda_webdata);
+    let divergence = find_mrcud(&tank_webdata, &zelda_webdata_divergence);
 
-    let res = format!("{:#?}\n{:#?}\n{:#?}\n", none, common, divergence);
+    let res = format!("{:#?}\n{:#?}\n{:#?}\n", none, source_has_more, divergence);
 
     assert_eq!(res, include_str!("dataset/tests/test_last_common_or_divergence.result"));
 }
@@ -405,6 +461,8 @@ fn test_tag_snaps_for_deletion() {
     assert_eq!(res, include_str!("dataset/tests/test_tag_snaps_for_deletion.result"));
 }
 
+
+/// See the documentation in [the PartialOrd implementation](Snap::PartialOrd)
 #[derive(Debug)]
 pub struct Snap {
     pub guid: u64,
@@ -426,6 +484,21 @@ impl PartialEq for Snap {
 }
 
 impl Eq for Snap { }
+
+/// For simplicity's sake, the algorithms that work on snapshots assume that no two different snapshots are ever taken on the exact same instant.
+/// This PartialOrd implementation reflects that: in the unlikely case that the snapshots are not the same (l.guid != r.guid) but the creation times are equal (l.creation == r.creation), the ordering is undefined.
+impl PartialOrd for Snap {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self == other {
+            return Some(Equal);
+        }
+        return match self.creation.cmp(&other.creation) {
+            Less => Some(Less),
+            Greater => Some(Greater),
+            Equal => None,
+        }
+    }
+}
 
 impl std::fmt::Display for Snap {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

@@ -14,3 +14,5 @@ thiserror = "1.0.30"
 anyhow = "1.0.48"
 clap = "3.0.0-beta.5"
 rand = "0.8.4"
+nix = { version = "*", features = ["zerocopy"] }
+indicatif = "*"
