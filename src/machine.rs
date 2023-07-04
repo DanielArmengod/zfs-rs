@@ -111,7 +111,7 @@ impl Machine {
         Ok(())
     }
 
-    pub fn send_from_s_till_newest(&self, ds: &Dataset, s: &Snap, simple_incremental: bool, verbose: bool) -> Result<Child, MachineError> {
+    pub fn send_from_s_till_newest(&self, ds: &Dataset, s: &Snap, simple_incremental: bool, verbose: bool) -> Command {
         assert_ne!(ds.newest_snap(), s);  // It is an error to do zfs send -i @today tank/foobar@today.
         let i = if simple_incremental {"i"} else {"I"};
         let verbose = if verbose {"v"} else {""};
@@ -119,26 +119,28 @@ impl Machine {
         let ds_name = ds.fullname();
         let dst_snap = &ds.snaps.last().unwrap().name;
         let mut cmd = self.prepare_cmd(&format!(
-            "zfs send -cp{v}Le{i} @{src_snap} {ds_name}@{dst_snap}", i=i, v=verbose, src_snap=src_snap, ds_name=ds_name, dst_snap=dst_snap
+            "zfs send -vP -cpLe{i} @{src_snap} {ds_name}@{dst_snap}", i=i, src_snap=src_snap, ds_name=ds_name, dst_snap=dst_snap
         ));
         cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn().map_err(|e| MachineError::SubprocessError(e))
+            .stderr(Stdio::piped());
+            // .spawn().map_err(|e| MachineError::SubprocessError(e))
+        return cmd;
     }
 
-    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap, verbose: bool) -> Result<Child, MachineError> {
+    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap, verbose: bool) -> Command {
         let verbose = if verbose {"v"} else {""};
         let snap = &s.name;
         let ds_name = ds.fullname();
         let mut cmd = self.prepare_cmd(&format!(
-            "zfs send -cp{v}Le {ds_name}@{snap}", v=verbose, snap=snap, ds_name=ds_name
+            "zfs send -vP -cpLe {ds_name}@{snap}", snap=snap, ds_name=ds_name
         ));
         cmd.stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn().map_err(|e| MachineError::SubprocessError(e))
+            .stderr(Stdio::piped());
+            // .spawn().map_err(|e| MachineError::SubprocessError(e))
+        return cmd;
     }
 
-    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Result<Child, MachineError> {
+    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Command {
         let dryrun = if dryrun {"-n"} else {""};
         let rollback = if rollback {"-F"} else {""};
         let verbose = if verbose {"-v"} else {""};
@@ -148,11 +150,12 @@ impl Machine {
         ));
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn().map_err(|e| MachineError::SubprocessError(e))
+            .stderr(Stdio::inherit());
+            // .spawn().map_err(|e| MachineError::SubprocessError(e))
+        return cmd;
     }
 
-    pub fn create_snap(&self, ds: &Dataset, name: &str) -> Result<(), MachineError> {
+    pub fn create_snap_with_name(&self, ds: &Dataset, name: &str) -> Result<(), MachineError> {
         let mut cmd = self.prepare_cmd(&format!(
             "zfs snapshot {}@{}", ds.fullname(), name
         ));
