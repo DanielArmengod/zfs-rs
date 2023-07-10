@@ -1,15 +1,18 @@
 use std::fmt::Debug;
 use std::io::{BufRead, BufReader};
 use std::os::fd::{IntoRawFd, RawFd};
+use std::process::Stdio;
 use std::thread;
 use std::time::Duration;
 use anyhow::{anyhow, bail, Context};
-use indicatif::ProgressBar;
+use indicatif::{MultiProgress, ProgressBar};
+use itertools::MultiPeek;
 use nix::errno::Errno;
 use nix::fcntl::{splice, SpliceFFlags};
 use crate::machine::{Machine, MachineError};
 use crate::dataset::{Dataset, find_mrcud};
 use crate::dataset::MRCUD::*;
+use crate::progressbar::do_progressbar_from_zfs_send_stderr;
 
 #[derive(Clone, Debug)]
 pub struct ReplicateDatasetOpts {
@@ -23,56 +26,7 @@ pub struct ReplicateDatasetOpts {
     pub app_verbose: bool,
     /// Some(snap_name) means that the user wants this program to take a snapshot.
     pub take_snap_now: Option<String>,
-}
-
-fn splice_with_progressbar(w: RawFd, r: RawFd, estimated: u64) -> Result<(), anyhow::Error> {
-    use indicatif::ProgressBar;
-    let pb = ProgressBar::new(estimated);
-    loop {
-        let data_moved = splice(w, None, r, None, 128*1024, SpliceFFlags::empty());
-        match data_moved {
-            Ok(0) => break,
-            Ok(n) => pb.inc(n as u64),
-            Err(Errno::EPIPE) => break,
-            Err(e) => return Err(e).context("splice syscall failed.") // Wrap that errno into an anyhow::Error and return.
-        }
-    }
-    pb.finish();
-    Ok(())
-}
-
-/// Read from a `zfs-send -vP` stderr stream and draw a fancy progress bar.
-/// Sample output to process (fields are tab-separated):
-/// ```
-/// full tank/old@topiso	1200354683528
-/// size	1200354683528
-/// 19:39:53	307603528	tank/old@topiso
-/// 19:39:54	655744176	tank/old@topiso
-/// [...]
-/// ```
-/// In the simple case where there's only a single snapshot to send, it appears that the first two
-/// header lines are redundant. This probably changes in recursive or intermediary-snapshot
-/// stream packages.
-/// Returns Ok
-fn do_progressbar_from_zfs_send_stderr<R: std::io::Read>(stream: R) -> Result<(), anyhow::Error>{
-    // Buffer the stderr stream to take advantage of line-oriented processing.
-    let mut stream = BufReader::new(stream);
-    let mut _first_header = String::new();
-    let mut second_header = String::new();
-    stream.read_line(&mut _first_header)?;
-    stream.read_line(&mut second_header)?;
-    let size : u64 = second_header
-        .trim_end().split("\t").nth(1).unwrap().parse().expect("Failed to parse zfs send size.");
-    let pb = ProgressBar::new(size);
-    for line in stream.lines() {
-        let line = line.expect("What do you mean, it wasn't UTF-8!?");
-        let xfer_so_far : u64 = line
-            .split("\t").nth(1).unwrap().parse().expect("Failed to parse zfs xfer'd-so-far.");
-        pb.set_position(xfer_so_far);
-    }
-    pb.finish();
-    thread::sleep(Duration::from_secs(1));
-    Ok(())
+    pub ratelimit: Option<u64>
 }
 
 pub fn replicate_dataset(
@@ -170,22 +124,36 @@ pub fn replicate_dataset(
 
     let mut source_send_cmd = src_machine.send_from_s_till_newest(&src_ds, most_recent_common_snap, opts.simple_incremental, opts.verbose_send);
     let mut destination_recv_cmd = dst_machine.recv(&dst_ds, opts.use_rollback_flag_on_recv, opts.dryrun_recv, opts.verbose_recv);
+    let mut source_send_process;
+    let mut destination_recv_process;
 
     // Pipe the sending process into the receiving process, and spawn them both.
     // It's a bit of a shame that there's no natural way (in Rust) to set up the pipes before
     // spawning any of the child processes, but oh well.
-    let mut source_send_process = source_send_cmd.spawn().context("Failed to spawn source-side send process.")?;
-    destination_recv_cmd.stdin(source_send_process.stdout.take().unwrap());
-    let mut destination_recv_process = destination_recv_cmd.spawn().context("Failed to spawn destination-side recv process.")?;
-
+    match opts.ratelimit{
+        None => {
+            source_send_process = source_send_cmd.spawn().context("Failed to spawn source-side send process.")?;
+            destination_recv_cmd.stdin(source_send_process.stdout.take().unwrap());
+            destination_recv_process = destination_recv_cmd.spawn().context("Failed to spawn destination-side recv process.")?;
+        }
+        Some(lim) => {
+            let mut pv_ratelimit_cmd = std::process::Command::new("pv");
+            pv_ratelimit_cmd.args(["-q", "-L50M"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+            source_send_process = source_send_cmd.spawn().context("Failed to spawn source-side send process.")?;
+            pv_ratelimit_cmd.stdin(source_send_process.stdout.take().unwrap());
+            let mut pv_ratelimit_process = pv_ratelimit_cmd.spawn().context("Failed to sneed.")?;
+            destination_recv_cmd.stdin(pv_ratelimit_process.stdout.take().unwrap());
+            destination_recv_process = destination_recv_cmd.spawn().context("Failed to spawn destination-side recv process.")?;
+        }
+    }
     // At this point the transfer process is underway and we're not involved in moving data.
     // We do have to draw a progress bar. To do so take the standard error stream from the
     // sending process, where we find a header with the estimated amount of data to send as well
     // as periodic updates of progress.
-
-
-    do_progressbar_from_zfs_send_stderr(source_send_process.stderr.take().unwrap())
-        .context("There was a problem with drawing the progress bar.")?;
+    do_progressbar_from_zfs_send_stderr(source_send_process.stderr.take().unwrap());
+        // .context("There was a problem with drawing the progress bar.")?;
 
     let source_send_finished = source_send_process.wait().unwrap();
     let destination_recv_finished = destination_recv_process.wait().unwrap();

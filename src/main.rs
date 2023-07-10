@@ -5,6 +5,8 @@ mod dataset;
 mod machine;
 mod replicate;
 mod retention;
+mod progressbar;
+mod cutting_floor;
 
 use std::process::exit;
 use std::str::FromStr;
@@ -168,6 +170,7 @@ fn main() {
                 app_verbose,
                 allow_divergent_destination: false,
                 allow_nonexistent_destination: false,
+                ratelimit: None
             };
             replicate_dataset(&mut src_machine, &mut src_ds, &mut dst_machine, &mut dst_ds, opts)
         }
