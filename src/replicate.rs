@@ -7,8 +7,6 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context};
 use indicatif::{MultiProgress, ProgressBar};
 use itertools::MultiPeek;
-use nix::errno::Errno;
-use nix::fcntl::{splice, SpliceFFlags};
 use crate::machine::{Machine, MachineError};
 use crate::dataset::{Dataset, find_mrcud};
 use crate::dataset::MRCUD::*;
@@ -18,18 +16,14 @@ use crate::progressbar::do_progressbar_from_zfs_send_stderr;
 pub struct ReplicateDatasetOpts {
     pub use_rollback_flag_on_recv: bool,
     pub allow_divergent_destination: bool,
-    pub allow_nonexistent_destination: bool,
+    pub init_nonexistent_destination: bool,
     pub simple_incremental: bool,
-    pub verbose_send: bool,
-    pub verbose_recv: bool,
-    pub dryrun_recv: bool,
     pub app_verbose: bool,
-    /// Some(snap_name) means that the user wants this program to take a snapshot.
     pub take_snap_now: Option<String>,
-    pub ratelimit: Option<u64>
+    pub ratelimit: Option<String>
 }
 
-pub fn replicate_dataset(
+pub fn replicate_dataset_cli(
     src_machine : &mut Machine,
     src_ds : &mut Dataset,
     dst_machine : &mut Machine,
@@ -63,10 +57,10 @@ pub fn replicate_dataset(
         }
     }
 
-    if !dst_dataset_existed && !opts.allow_nonexistent_destination {
+    if !dst_dataset_existed && !opts.init_nonexistent_destination {
         return Err(anyhow!(r#"Dataset "{}" does not exist in host "{}" and full send (--init-empty) not requested."#, dst_ds.fullname(), dst_machine));
     }
-    if !dst_dataset_existed && opts.allow_nonexistent_destination {
+    if !dst_dataset_existed && opts.init_nonexistent_destination {
         // TODO do full send. The following commented-out block of code was lifted out of the old version.
 
         //     eprintln!("Will begin with a full-send of {}.", most_recent_common_snap.name);
@@ -122,14 +116,14 @@ pub fn replicate_dataset(
         eprintln!(r#"Now doing incremental send from "{}" to "{}"."#, most_recent_common_snap.name, src_ds.newest_snap());
     }
 
-    let mut source_send_cmd = src_machine.send_from_s_till_newest(&src_ds, most_recent_common_snap, opts.simple_incremental, opts.verbose_send);
-    let mut destination_recv_cmd = dst_machine.recv(&dst_ds, opts.use_rollback_flag_on_recv, opts.dryrun_recv, opts.verbose_recv);
+    let mut source_send_cmd = src_machine.send_from_s_till_newest(&src_ds, most_recent_common_snap, opts.simple_incremental);
+    let mut destination_recv_cmd = dst_machine.recv(&dst_ds, opts.use_rollback_flag_on_recv);
     let mut source_send_process;
     let mut destination_recv_process;
 
     // Pipe the sending process into the receiving process, and spawn them both.
-    // It's a bit of a shame that there's no natural way (in Rust) to set up the pipes before
-    // spawning any of the child processes, but oh well.
+    // It's a bit of a shame that there's no natural way (using std::process) to set up the pipes
+    // before spawning any of the child processes, but oh well.
     match opts.ratelimit{
         None => {
             source_send_process = source_send_cmd.spawn().context("Failed to spawn source-side send process.")?;
@@ -138,7 +132,7 @@ pub fn replicate_dataset(
         }
         Some(lim) => {
             let mut pv_ratelimit_cmd = std::process::Command::new("pv");
-            pv_ratelimit_cmd.args(["-q", "-L50M"])
+            pv_ratelimit_cmd.args(["-q", "-L", lim.as_str()])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped());
             source_send_process = source_send_cmd.spawn().context("Failed to spawn source-side send process.")?;

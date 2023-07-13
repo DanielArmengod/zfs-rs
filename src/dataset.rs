@@ -109,7 +109,7 @@ pub enum SpecParseError {
     EmptyComponent(String),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Comm {
     LEFT,
     BOTH,
@@ -130,7 +130,7 @@ impl Dataset {
     ///   * A single vector containing a reference to each unique snapshot, tagged as it appears on the left side, the right side, or both sides.
     ///   * The index within the previous vector of the last snapshot encountered that is in both collections, if any.
     /// The return vector has the same sort order as the input vectors.
-    /// If the input is sorted oldest snapshot first, then the second return value is useful as it is the "most recent common snapshot".
+    /// If the input is sorted date ascending (oldest snapshot first), then the second return value indexes the "most recent common snapshot".
     /// The input vectors are not checked for proper sort order, and the results are undefined if they are not properly sorted.
     pub fn comm<'a, 'b, 'c>(&'a self, other: &'b Self) -> (Vec<(Comm, &'c Snap)>, Option<usize>)
         where
@@ -357,7 +357,7 @@ impl std::fmt::Display for Dataset {
 
 
 #[cfg(test)]
-fn build_fake_dataset(spec: &str, snaps_output_literal: &str) -> Dataset {
+pub(crate) fn build_fake_dataset(spec: &str, snaps_output_literal: &str) -> Dataset {
     let mut ds = Dataset::from_str(spec).unwrap();
     let snaps = parse_zfs(snaps_output_literal);
     ds.snaps = snaps;

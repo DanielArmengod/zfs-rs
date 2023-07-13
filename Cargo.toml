@@ -7,12 +7,10 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4"
-subprocess = "0.2.8"
 regex = "1"
-itertools = "0.10.1"
-thiserror = "1.0.30"
-anyhow = "1.0.48"
-clap = "3.0.0-beta.5"
-rand = "0.8.4"
-nix = { version = "*", features = ["zerocopy"] }
-indicatif = "*"
+itertools = "0.10"
+thiserror = "1"
+anyhow = "1"
+clap = "4"
+rand = "0.8"
+indicatif = "0.17"

@@ -3,7 +3,6 @@ use std::{io, process, string};
 use std::process::{Child, Command, Output, Stdio};
 use anyhow::Context;
 use crate::dataset::{Dataset, Snap, SpecParseError};
-use subprocess::{Exec, PopenError, Redirection};
 use chrono::offset::Utc;
 use chrono::TimeZone;
 use itertools::Itertools;
@@ -111,10 +110,9 @@ impl Machine {
         Ok(())
     }
 
-    pub fn send_from_s_till_newest(&self, ds: &Dataset, s: &Snap, simple_incremental: bool, verbose: bool) -> Command {
+    pub fn send_from_s_till_newest(&self, ds: &Dataset, s: &Snap, simple_incremental: bool) -> Command {
         assert_ne!(ds.newest_snap(), s);  // It is an error to do zfs send -i @today tank/foobar@today.
         let i = if simple_incremental {"i"} else {"I"};
-        let verbose = if verbose {"v"} else {""};
         let src_snap = &s.name;
         let ds_name = ds.fullname();
         let dst_snap = &ds.snaps.last().unwrap().name;
@@ -123,12 +121,10 @@ impl Machine {
         ));
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
-            // .spawn().map_err(|e| MachineError::SubprocessError(e))
         return cmd;
     }
 
-    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap, verbose: bool) -> Command {
-        let verbose = if verbose {"v"} else {""};
+    pub fn fullsend_s(&self, ds: &Dataset, s: &Snap) -> Command {
         let snap = &s.name;
         let ds_name = ds.fullname();
         let mut cmd = self.prepare_cmd(&format!(
@@ -136,22 +132,18 @@ impl Machine {
         ));
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
-            // .spawn().map_err(|e| MachineError::SubprocessError(e))
         return cmd;
     }
 
-    pub fn recv(&self, ds: &Dataset, rollback: bool, dryrun: bool, verbose: bool) -> Command {
-        let dryrun = if dryrun {"-n"} else {""};
+    pub fn recv(&self, ds: &Dataset, rollback: bool) -> Command {
         let rollback = if rollback {"-F"} else {""};
-        let verbose = if verbose {"-v"} else {""};
         let dst = ds.fullname();
         let mut cmd = self.prepare_cmd(&format!(
-            "zfs recv {rollback} {dryrun} {verbose} {dst}", dryrun=dryrun, rollback=rollback, verbose=verbose, dst=dst
+            "zfs recv {rollback} {dst}", rollback=rollback, dst=dst
         ));
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
-            // .spawn().map_err(|e| MachineError::SubprocessError(e))
         return cmd;
     }
 
@@ -173,7 +165,6 @@ impl Machine {
                 Err(MachineError::ZFSCommandExecutionError(result.stderr_str()))
             }
         }
-
         Ok(())
     }
 
