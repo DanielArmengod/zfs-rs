@@ -1,12 +1,6 @@
 use std::fmt::Debug;
-use std::io::{BufRead, BufReader};
-use std::os::fd::{IntoRawFd, RawFd};
 use std::process::Stdio;
-use std::thread;
-use std::time::Duration;
-use anyhow::{anyhow, bail, Context};
-use indicatif::{MultiProgress, ProgressBar};
-use itertools::MultiPeek;
+use anyhow::{anyhow, Context};
 use crate::machine::{Machine, MachineError};
 use crate::dataset::{Dataset, find_mrcud};
 use crate::dataset::MRCUD::*;

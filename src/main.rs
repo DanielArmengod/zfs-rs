@@ -1,5 +1,5 @@
 #![deny(unused_must_use)]
-#![allow(unused_imports)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
+// #![allow(unused_imports)]  // TODO: REMOVE WITH FINAL PRODUCTION CODE!
 
 mod dataset;
 mod machine;
@@ -10,17 +10,10 @@ mod cutting_floor;
 mod comm;
 
 use std::process::exit;
-use std::str::FromStr;
-use chrono::format::parse;
 use clap::{Command, Arg, ArgAction};
-use crate::dataset::{Dataset, parse_spec};
-use crate::machine::Machine;
+use crate::dataset::{parse_spec};
 use crate::replicate::{*};
 use crate::retention::{*};
-
-#[allow(non_snake_case)]
-#[inline(always)]
-// fn S(s: &str) -> String {s.to_owned()}
 
 
 fn get_n_random_chars(n: usize) -> String {

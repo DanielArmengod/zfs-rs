@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, stdin};
+use std::io::{BufRead, BufReader};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 /// Draw a progress bar by consuming the diagnostic output of `zfs send -vP`

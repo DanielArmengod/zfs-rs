@@ -1,6 +1,6 @@
 use std::fmt::Debug;
-use anyhow::{bail, Context};
-use crate::machine::{Machine, MachineError};
+
+use crate::machine::{Machine};
 use crate::dataset::{Dataset, };
 
 #[derive(Copy, Clone, Debug)]

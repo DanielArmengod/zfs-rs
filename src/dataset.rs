@@ -1,6 +1,5 @@
-use std::cmp::{max, Ordering};
+use std::cmp::{Ordering};
 use std::cmp::Ordering::{Less, Equal, Greater};
-use std::io::Write;
 use std::str::FromStr;
 use self::Comm::*;
 use self::MRCUD::*;

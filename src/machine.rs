@@ -1,11 +1,10 @@
 use std::str::FromStr;
-use std::{io, process, string};
-use std::process::{Child, Command, Output, Stdio};
-use anyhow::Context;
+use std::{io};
+use std::process::{Command, Output, Stdio};
+
 use crate::dataset::{Dataset, Snap, SpecParseError};
 use chrono::offset::Utc;
 use chrono::TimeZone;
-use itertools::Itertools;
 use thiserror::Error;
 
 
@@ -213,7 +212,7 @@ pub fn parse_zfs(output: &str) -> Vec<Snap> {
     for line in output.lines() {
         let mut splitted = line.split('\t');
         let name = splitted.next().unwrap().split('@').nth(1).unwrap().to_string();
-        let creation = Utc.timestamp(splitted.next().unwrap().parse().unwrap(), 0);
+        let creation = Utc.timestamp_opt(splitted.next().unwrap().parse().unwrap(), 0).unwrap();
         let guid : u64 = splitted.next().unwrap().parse().unwrap();
         let holds : u32 = splitted.next().unwrap().parse().unwrap();
         retval.push(Snap {name, creation, guid, holds});

@@ -13,9 +13,9 @@ pub struct CommOpts {
 const INDENT_WIDTH : usize = 12;
 
 pub fn comm_cli(
-    mut src_machine : Machine,
+    src_machine : Machine,
     mut src_ds : Dataset,
-    mut dst_machine : Machine,
+    dst_machine : Machine,
     mut dst_ds: Dataset,
     opts: CommOpts
 ) -> Result<(), anyhow::Error> {
@@ -46,7 +46,7 @@ fn do_comm(src_ds: Dataset, dst_ds: Dataset, opts: CommOpts) -> Result<(), anyho
     }
     else {
         if !opts.collapse_keep_both_ends {
-            for (side, mut group) in &tagged.into_iter().group_by(|(side, snap)| *side) {
+            for (side, mut group) in &tagged.into_iter().group_by(|(side, _)| *side) {
                 let (_, group_leader) = group.next().unwrap();
                 let rest_of_group_len = group.count();
                 let indent = match side {
@@ -59,7 +59,7 @@ fn do_comm(src_ds: Dataset, dst_ds: Dataset, opts: CommOpts) -> Result<(), anyho
             }
         }
         else {
-            for (side, mut group) in &tagged.into_iter().group_by(|(side, snap)| *side) {
+            for (side, mut group) in &tagged.into_iter().group_by(|(side, _)| *side) {
                 let (_, group_leader) = group.next().unwrap();
                 let last = group.enumerate().last();
                 let indent = match side {
