@@ -11,6 +11,7 @@ mod comm;
 
 use std::process::exit;
 use clap::{Command, Arg, ArgAction};
+use crate::comm::CommOpts;
 use crate::dataset::{parse_spec};
 use crate::replicate::{*};
 use crate::retention::{*};
@@ -67,13 +68,11 @@ fn main() {
         .arg(
             Arg::new("source")
                 .help("Source dataset to replicate.")
-                .index(1)
                 .required(true)
         )
         .arg(
             Arg::new("destination")
                 .help("Destination dataset into which to replicate.")
-                .index(2)
                 .required(true)
         )
         .arg(
@@ -139,7 +138,6 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
         .arg(
             Arg::new("dataset")
                 .help("Dataset on which to operate.")
-                .index(1)
                 .required(true)
         )
         .arg(
@@ -156,21 +154,33 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
     let comm = Command::new("comm")
         .about("Run a comm(1)-like utility on the snapshots of two copies of the same dataset.")
         .arg(
-            Arg::new("dataset_1")
-                .help("First dataset.")
-                .index(1)
+            Arg::new("source")
+                .help("Left-hand side, or source, dataset.")
                 .required(true)
         )
         .arg(
-            Arg::new("dataset_2")
-                .help("Second dataset.")
-                .index(2)
+            Arg::new("destination")
+                .help("Right-hand side, or destination, dataset.")
                 .required(true)
         )
         .arg(
-            Arg::new("no-collapse")
-                .help("Present output in natural form, without grouping consecutive runs.")
-                .long("no-collapse")
+            Arg::new("collapse")
+                .help("Group consecutive runs for a terser output.")
+                .short('c')
+                .action(ArgAction::SetTrue)
+        )
+        .arg(
+            Arg::new("collapse-keep-both-ends")
+                .help("Group consecutive runs for a terser output; display both first and last element in each group.")
+                .short('C')
+                .action(ArgAction::SetTrue)
+                .conflicts_with("collapse")
+        )
+        .arg(
+            Arg::new("reverse-sort")
+                .help("Display snapshots in descending chronological order (newest first).")
+                .short('r')
+                .action(ArgAction::SetTrue)
         );
 
     let mut main_parser = Command::new("zfs-rs")
@@ -229,8 +239,21 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
             retention::apply_retention(&mut machine, &mut ds, opts)
         }
 
-        Some(("comm", _sub_matches)) => {
-            unimplemented!()
+        Some(("comm", sub_matches)) => {
+            let (src_machine, src_ds) = parse_spec(sub_matches.get_one::<String>("source").unwrap()).unwrap_or_else(|err| {
+                eprintln!("Can't parse {} as a valid ZFS dataset: {}", sub_matches.get_one::<String>("source").unwrap(), err );
+                exit(1);
+            });
+            let (dst_machine, dst_ds) = parse_spec(sub_matches.get_one::<String>("destination").unwrap()).unwrap_or_else(|err| {
+                eprintln!("Can't parse {} as a valid ZFS dataset: {}", sub_matches.get_one::<String>("destination").unwrap(), err);
+                exit(1);
+            });
+            let opts = CommOpts {
+                order_asc: !sub_matches.get_flag("reverse-sort"),
+                collapse: sub_matches.get_flag("collapse"),
+                collapse_keep_both_ends: sub_matches.get_flag("collapse-keep-both-ends")
+            };
+            comm::comm_cli(src_machine, src_ds, dst_machine, dst_ds, opts)
         }
 
         None => {
