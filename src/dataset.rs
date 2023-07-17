@@ -123,6 +123,9 @@ impl Dataset {
             &self.fullname[idx+1..]
         } else { "" }
     }
+    pub fn is_pool_root(&self) -> bool {
+        self.fullname().find('/').is_none()
+    }
 
     /// Walk two time-ordered vectors of snapshots.
     /// Return:
@@ -187,11 +190,11 @@ impl Dataset {
     }
 
     pub fn oldest_snap(&self) -> &Snap {
-        self.snaps.first().unwrap()
+        self.snaps.first().expect("This dataset contains no snapshots.")
     }
 
     pub fn newest_snap(&self) -> &Snap {
-        &self.snaps.last().unwrap()
+        &self.snaps.last().expect("This dataset contains no snapshots.")
     }
 
     pub fn append_relative(&mut self, other: &Self) {
@@ -462,7 +465,7 @@ fn test_tag_snaps_for_deletion() {
 
 
 /// See the documentation in [the PartialOrd implementation](Snap::PartialOrd)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Snap {
     pub guid: u64,
     pub name: String,  // Only the snapshot name; i.e. to the right of '@'.

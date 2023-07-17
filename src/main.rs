@@ -105,6 +105,7 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
                 .help("Don't abort the process if zfs-rs detects the destination side diverges. May casue data loss; see manual.")
                 .short('D')
                 .long("allow-divergent-destination")
+                .requires("rollback")
         )
         .arg(
             Arg::new("init-nonexistent-destination")
@@ -126,6 +127,7 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
         )
         .arg(
             Arg::new("take-snap-now-name")
+                .action(ArgAction::Set)
                 .help("The user-supplied name to use for the snapshot created by --take-snap-now.")
                 .num_args(1)
                 .long("snap-name")
@@ -203,8 +205,8 @@ Defaults to sending all intervening snapshots between the last snapshot in commo
             });
             let take_snap_now: Option<String> =
                 if sub_matches.get_flag("take-snap-now") {
-                    if sub_matches.get_flag("take-snap-now-name") {
-                        Some(sub_matches.get_one::<String>("take-snap-now-name").unwrap().to_owned())
+                    if let Some(name) = sub_matches.get_one::<String>("take-snap-now-name") {
+                        Some(name.to_owned())
                     } else {
                         Some(format!("zfs-rs-{}", get_n_random_chars(7)))
                     }

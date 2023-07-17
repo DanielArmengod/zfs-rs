@@ -3,7 +3,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 /// Draw a progress bar by consuming the diagnostic output of `zfs send -vP`
 /// Samples of this output are included for developer reference under /misc.
-pub fn do_progressbar_from_zfs_send_stderr<R: std::io::Read>(stream: R) {
+pub fn do_progressbar_from_zfs_send_stderr<R: std::io::Read>(stream: R, ) {
     // Buffer the stderr stream to take advantage of line-oriented processing.
     let mut stream = BufReader::new(stream);
     // Process headers
@@ -24,9 +24,16 @@ pub fn do_progressbar_from_zfs_send_stderr<R: std::io::Read>(stream: R) {
             // stream to be sent.
             break fields[1].parse().unwrap();
         }
+        let to;
+        let size;
+        match fields[0] {
+            "full" => {to = fields[1]; size = fields[2];}
+            "incremental" => {to = fields[2]; size = fields[3];}
+            _ => unimplemented!("Unknown form of `zfs send -vP` output.")
+        }
         let _from = fields[1].to_owned();
-        let to = fields[2].split("@").last().unwrap().to_owned();
-        let size : u64 = fields[3].parse().unwrap();
+        let to = to.split("@").last().unwrap().to_owned();
+        let size : u64 = size.parse().unwrap();
         itemized_header_lines.push((to, size));
     };
 

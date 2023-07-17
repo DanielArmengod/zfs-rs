@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::{io};
 use std::process::{Command, Output, Stdio};
-
 use crate::dataset::{Dataset, Snap, SpecParseError};
 use chrono::offset::Utc;
 use chrono::TimeZone;
@@ -19,7 +18,7 @@ pub enum MachineError {
     #[error("ZFS administrative commands not in PATH. Hint: is ZFS installed in the target machine, and are you root there?")]
     NoZFSRuntime,
     #[error("Failed to spawn command: {0}")]
-    SubprocessError(io::Error),
+    SubprocessError(#[from] io::Error),
     #[error("Unknown ZFS command execution error: {0}")]
     ZFSCommandExecutionError(String),
 }
@@ -52,7 +51,6 @@ impl OutputExt for Output {
     fn stdout_str(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
     }
-
     fn stderr_str(&self) -> String {
         String::from_utf8_lossy(&self.stderr).into_owned()
     }
@@ -64,8 +62,6 @@ impl OutputExt for Output {
 /// Unfortunately sshd always invokes a shell on the remote side. See https://unix.stackexchange.com/q/205567/
 /// So whatever; in a future version of this program I'll could go with environment variables and quoted shell expansion, for untrusted user input. Idk.
 impl Machine {
-    pub fn _get_datasets(&self) -> Vec<()> {todo!()}
-
     /// Prepends `ssh {machine.user}@{machine.host} -- ` to `command` if `self` is a remote host.
     /// Prepends `sh -c ` to `command` if `self` is the local host.
     fn prepare_cmd(&self, command: &str) -> Command {
@@ -92,8 +88,7 @@ impl Machine {
         let mut cmd= self.prepare_cmd(&format!(
             "zfs list -Hp -o name,creation,guid,userrefs -t snapshot -d1 {}", dataset.fullname()
         ));
-        let result = cmd.output()
-            .map_err(|e| MachineError::SubprocessError(e))?;   // TODO <- timeout
+        let result = cmd.output()?;   // TODO <- timeout
         if !result.status.success() {
             return if result.stderr.ends_with(b"dataset does not exist\n") {
                 Err(MachineError::NoDataset)
@@ -146,12 +141,11 @@ impl Machine {
         return cmd;
     }
 
-    pub fn create_snap_with_name(&self, ds: &Dataset, name: &str) -> Result<(), MachineError> {
+    pub fn create_snap_with_name(&self, ds: &mut Dataset, name: &str) -> Result<(), MachineError> {
         let mut cmd = self.prepare_cmd(&format!(
             "zfs snapshot {}@{}", ds.fullname(), name
         ));
-        let result = cmd.output()
-            .map_err(|e| MachineError::SubprocessError(e))?;   // TODO <- timeout
+        let result = cmd.output()?; // TODO: timeout
 
         if !result.status.success() {
             return if result.stderr_str().contains("invalid character") {
@@ -164,31 +158,23 @@ impl Machine {
                 Err(MachineError::ZFSCommandExecutionError(result.stderr_str()))
             }
         }
+        self.get_snaps(ds)?;
         Ok(())
     }
 
+    /// Panics if `ds.is_pool_root()` is true.
     pub fn create_ancestors(&self, ds: &Dataset) -> Result<(), MachineError> {
-        #![allow(warnings)]
-        unimplemented!(); /*
-        let parts: Vec<&str> = ds.fullname().split('/').collect();
-        let except_last = parts.iter().take(parts.len()-1).join("/");
-        let mut cmd = format!("zfs create -p {}", except_last);
-        if let Machine::Remote {host} = self {
-            cmd = format!("ssh {} -- '{}'", host, cmd);
+        let fullname = ds.fullname();
+        let idx = fullname.rfind('/').unwrap();
+        let dirname = &fullname[..idx];
+        let mut cmd= self.prepare_cmd(&format!(
+            "zfs create -p {}", dirname
+        ));
+        let result = cmd.output()?;   // TODO <- timeout
+        if !result.status.success() {
+           return Err(MachineError::ZFSCommandExecutionError(result.stderr_str()));
         }
-
-        // TODO: Use .communicate() instead of .capture() to support timeout settings.
-        let subproc = Exec::shell(cmd)
-            .stdout(Redirection::Pipe)
-            .stderr(Redirection::Pipe)
-            // .capture().context("Failed to spawn the command.")?;
-            .capture()?;
-        if !subproc.exit_status.success() {
-            return Err(MachineError::ZFSCommandExecutionError(subproc.stderr_str()))
-        }
-
         Ok(())
-        */
     }
 }
 
