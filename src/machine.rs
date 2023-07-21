@@ -133,7 +133,7 @@ impl Machine {
         let rollback = if rollback {"-F"} else {""};
         let dst = ds.fullname();
         let mut cmd = self.prepare_cmd(&format!(
-            "zfs recv {rollback} {dst}", rollback=rollback, dst=dst
+            "zfs recv -s {rollback} {dst}", rollback=rollback, dst=dst
         ));
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())

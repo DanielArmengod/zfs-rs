@@ -17,13 +17,9 @@ build cmdline 2 ->
 Lisf of things to do:
     [*] Implement comm
     [*] Implement full send
-    [ ] Take the snapshot (-t) only after executing find_mrcud(), if it is determined that
-            SourceHasMore, or
-            UpToDate, or
-            opts.allow_divergent_destination and
-                DestinationHasMore, or
-                Divergence
+    [*] Take the snapshot (-t) as late in the process as possible
     [*] Implement spinny-twirly :emoji: progress bars
     [ ] Rework manual
     [.] Rework clap parsing
     [*] Update dependencies
+    [ ] Implement interruptable receive (with auto-discovery)

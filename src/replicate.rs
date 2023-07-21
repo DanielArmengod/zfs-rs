@@ -22,7 +22,7 @@ pub fn replicate_dataset_cli(
     src_ds : &mut Dataset,
     dst_machine : &mut Machine,
     dst_ds: &mut Dataset,
-    opts: ReplicateDatasetOpts,
+    mut opts: ReplicateDatasetOpts,
 ) -> Result<String, anyhow::Error> {
     dst_ds.append_relative(src_ds);
 
@@ -52,6 +52,10 @@ pub fn replicate_dataset_cli(
             eprintln!(r#"Ensuring "{dst_machine}:{dst_ds}"'s ancestors exist."#);
         }
         dst_machine.create_ancestors(dst_ds).context(format!(r#"Failed to create "{dst_machine}:{dst_ds}"'s ancestors!"#))?;
+        if let Some(snap_name) = opts.take_snap_now.take() {
+            eprintln!(r#"Taking snapshot "{src_machine}:{src_ds}@{snap_name}" (requested by --take-snap-now)."#);
+            src_machine.create_snap_with_name(src_ds, &snap_name).context("Failed to take snapshot (requested by --take-snap-now).")?;
+        }
         let mut source_send_cmd = src_machine.fullsend_s(&src_ds, src_ds.oldest_snap());
         let mut destination_recv_cmd = dst_machine.recv(&dst_ds, opts.use_rollback_flag_on_recv);
         let (mut source_send_process,
