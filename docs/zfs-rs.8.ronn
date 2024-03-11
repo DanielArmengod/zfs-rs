@@ -1,10 +1,10 @@
-NAME:
-zfs-rs replicate - ZFS administration utility to automate the synchronizing of datasets via sending snapshots.
+zfs-rs(8) -- ZFS administration utility to automate the synchronizing of datasets via sending snapshots.
+=======================================================================================================
 
-SYNOPSIS:
+## SYNOPSIS:
 zfs-rs replicate [OPTIONS] <source> <destination>
 
-DESCRIPTION:
+## DESCRIPTION:
 zfs-rs replicate automates the process of transferring snapshots between multiple instances of the same dataset. It was developed to automate the transfer of nightly "backups" on production infrastructure.
 
 Given a source and a destination, zfs-rs replicate will obtain the snapshot list for both instances, compute whether it is possible to send a delta from A to B, and execute the appropriate zfs(8) commands.
@@ -40,8 +40,8 @@ An administrator will normally give idential names to different replicas of the 
 
 Of course, having a different naming scheme on the source and destination pools precludes the use of the relative ("//") paths.
 
-OPTIONS:
---take-snap-now, --take-snap-now-name=NAME, -t, -TNAME
+## OPTIONS:
+  * --take-snap-now, --take-snap-now-name=NAME, -t, -TNAME:
     The starting snapshot (s1) will necessarily be the most recent snapshot that exists in both instances of the dataset that is being replicated.
 
     For the ending snapshot (s2), zfs-rs replicate will by default choose the most recent snapshot (that already exists) on the source instance. If desired (-t, and optionally -T options), zfs-rs replicate can generate a snapshot on the source instance prior to sending and use that as the ending snapshot (s2).
@@ -50,28 +50,20 @@ OPTIONS:
 
     A name for the snapshot-to-be-created can be passed in using -T.
 
---simple-incremental, -i
+  * --simple-incremental, -i:
     zfs-rs replicate defaults to sending all intervening snapshots between s1 (the last snapshot in common between <source> and <destination>) and s2 (the last snapshot in <source>).
     If this option is set, the replication stream will not include intervening snapshots, i.e. `zfs send -i` will be used, instead of `zfs send -I`.
 
---init-empty, --allow-init-empty, --allow-nonexistent-dest
-    zfs-rs replicate is meant to be used primarily in the automated, unattended replication of snapshots from a "live" instance of a dataset to a backup replica. In this scenario it is a hard error to find that the backup destination does not, in fact, exist. zfs-rs replicate therefore refuses to proceed.
-    Further, if using this tool interactively, it is possible to mis-specify the source and destination paths so that they do not point to the same dataset. Consider the following invocation, in which a typo has been inadvertently entered:
-
-        root@production.machine:~$ SNAPSHOT_NAME="nightly-$(date +%F)"  # nightly-2022-10-23
-        root@production.machine:~$ zfs-rs replicate -t -T"$SNAPSHOT_NAME" tank/somedataset backup.machine:tank/somedatasett
-
-    Assume here the administrator means to create a nightly snapshot of some long-lived production dataset and send that over to his backup machine, but he has mistyped the destination name.
-
+  * --init-empty, --allow-init-empty, --allow-nonexistent-dest:
     Use this flag to indicate that it is desired to create the dataset in the destination if it does not already exist.
 
---rollback, -F
+  * --rollback, -F:
     Allow rolling back the destination dataset. Corresponds with `zfs recv -F`. Please find detailed usage notes under section ZFS-RECV ROLLBACK.
 
---dry-run, -n
+  * --dry-run, -n:
     Do not actually receive the replication stream into <destination>.
 
---verbose, -v
+  * --verbose, -v:
     Increase verbosity. This will print any zfs(8) invocations that this program performs.
 
 

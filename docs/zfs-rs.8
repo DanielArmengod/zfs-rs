@@ -1,0 +1,79 @@
+.\" generated with Ronn-NG/v0.9.1
+.\" http://github.com/apjanke/ronn-ng/tree/0.9.1
+.TH "ZFS\-RS" "8" "March 2024" ""
+.SH "NAME"
+\fBzfs\-rs\fR \- ZFS administration utility to automate the synchronizing of datasets via sending snapshots\.
+.SH "SYNOPSIS:"
+zfs\-rs replicate [OPTIONS] \fIsource\fR \fIdestination\fR
+.SH "DESCRIPTION:"
+zfs\-rs replicate automates the process of transferring snapshots between multiple instances of the same dataset\. It was developed to automate the transfer of nightly "backups" on production infrastructure\.
+.P
+Given a source and a destination, zfs\-rs replicate will obtain the snapshot list for both instances, compute whether it is possible to send a delta from A to B, and execute the appropriate zfs(8) commands\.
+.P
+USAGE: Dataset instances \fIsource\fR and \fIdestination\fR admit very simple naming rules\. At its most basic, a dataset can be specified by naming it as it appears on the output of \fBzfs list\fR\. An example, assuming two locally\-attached zpools named "tank" and "backup":
+.IP "" 4
+.nf
+zfs\-rs replicate tank/webserver\-data backup/webserver\-data
+.fi
+.IP "" 0
+.P
+Only valid characters are alphanumeric, dash '\-', underscore '_' and slash '/', the latter only as component delimiter\. This is a subset of the allowed character set in ZFS names, and may change in future versions of this program\.
+.P
+The dataset can be indicated to exist on a remote, SSH\-accessible host by prefixing it with a 'hostname:' part, similar to scp(1):
+.IP "" 4
+.nf
+zfs\-rs replicate tank/webserver\-data bk01\.company\.tld:backup/webserver\-data
+.fi
+.IP "" 0
+.P
+Both source and destination can be specified to be remote, including simultaneously in a single invocation of zfs\-rs replicate\. More details on this mode of operation under section ZFS\-RS REPLICATE OVER SSH\.
+.P
+A relative path can be specified by one (and only one) occurrence of "//" in the \fIsource\fR instance\. All name components that appear the "//" are appended to the destination instance\.
+.IP "" 4
+.nf
+zfs\-rs replicate tank/containers/webserver\-rootfs bk01\.company\.tld:backup/containers/webserver\-rootfs
+zfs\-rs replicate tank//containers/webserver\-rootfs bk01\.company\.tld:backup
+.fi
+.IP "" 0
+.P
+Both invocations are identical\. Note that trailing slashes are always illegal; it would be incorrect to write:
+.IP "" 4
+.nf
+zfs\-rs replicate tank//containers/webserver\-rootfs bk01\.company\.tld:backup/  # WRONG!
+.fi
+.IP "" 0
+.P
+An administrator will normally give idential names to different replicas of the same dataset; this comes naturally but not mandated by ZFS (and neither by zfs\-rs replicate)\. It is perfectly valid to execute the following:
+.IP "" 4
+.nf
+root@webserver05:~$ zfs\-rs replicate tank/webserver\-data bk01\.company\.tld:backup/webserver05\-data
+.fi
+.IP "" 0
+.P
+Of course, having a different naming scheme on the source and destination pools precludes the use of the relative ("//") paths\.
+.SH "OPTIONS:"
+.TP
+\-\-take\-snap\-now, \-\-take\-snap\-now\-name=NAME, \-t, \-TNAME
+The starting snapshot (s1) will necessarily be the most recent snapshot that exists in both instances of the dataset that is being replicated\.
+.IP
+For the ending snapshot (s2), zfs\-rs replicate will by default choose the most recent snapshot (that already exists) on the source instance\. If desired (\-t, and optionally \-T options), zfs\-rs replicate can generate a snapshot on the source instance prior to sending and use that as the ending snapshot (s2)\.
+.IP
+If only \-t is specified, a snapshot name consisting of a prefix ("zfs\-rs\-" at the time of writing this manual) plus a short, random string of characters will be used\.
+.IP
+A name for the snapshot\-to\-be\-created can be passed in using \-T\.
+.TP
+\-\-simple\-incremental, \-i
+zfs\-rs replicate defaults to sending all intervening snapshots between s1 (the last snapshot in common between \fIsource\fR and \fIdestination\fR) and s2 (the last snapshot in \fIsource\fR)\. If this option is set, the replication stream will not include intervening snapshots, i\.e\. \fBzfs send \-i\fR will be used, instead of \fBzfs send \-I\fR\.
+.TP
+\-\-init\-empty, \-\-allow\-init\-empty, \-\-allow\-nonexistent\-dest
+Use this flag to indicate that it is desired to create the dataset in the destination if it does not already exist\.
+.TP
+\-\-rollback, \-F
+Allow rolling back the destination dataset\. Corresponds with \fBzfs recv \-F\fR\. Please find detailed usage notes under section ZFS\-RECV ROLLBACK\.
+.TP
+\-\-dry\-run, \-n
+Do not actually receive the replication stream into \fIdestination\fR\.
+.TP
+\-\-verbose, \-v
+Increase verbosity\. This will print any zfs(8) invocations that this program performs\.
+

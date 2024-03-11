@@ -92,7 +92,7 @@ fn test_do_comm() {
     );
     let mut opts = CommOpts::default();
     opts.collapse = true;
-    opts.collapse_keep_both_ends = true;
+    opts.collapse_keep_both_ends = false;
     opts.order_asc = false;
     do_comm(tank_webdata, zelda_webdata, opts).unwrap();
 }
